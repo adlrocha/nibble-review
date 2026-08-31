@@ -10,7 +10,7 @@ function snapshot(overrides = {}) {
       prNumber: 42,
       workspace: "/workspace",
       workspaceHeadSha: "a".repeat(40),
-      botLogin: "singular-code-review[bot]",
+      botLogin: "nibble-review[bot]",
       eventName: null,
       eventPath: null,
       actor: "author",
@@ -89,7 +89,7 @@ test("participants preserve exact human handles and prefer commit names", () => 
         commit: { author: { name: "Author Person" } }
       }
     ],
-    issueComments: [{ id: 1, user: { login: "singular-code-review" } }],
+    issueComments: [{ id: 1, user: { login: "nibble-review" } }],
     reviewComments: [
       { id: 2, user: { login: "reviewer" } },
       { id: 3, user: { login: "linear-code[bot]" } }

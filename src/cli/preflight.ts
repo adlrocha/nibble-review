@@ -25,14 +25,19 @@ export async function main(env = process.env): Promise<void> {
   }
 
   const github = createGitHubClient({ token, repository })
-  const result = await new ReviewPreflight({ github, repository, prNumber }).evaluate(triggerCommentId)
+  const result = await new ReviewPreflight({
+    github,
+    repository,
+    prNumber,
+    command: env.REVIEW_COMMAND?.trim() || undefined
+  }).evaluate(triggerCommentId)
   if (env.GITHUB_OUTPUT) {
     appendFileSync(env.GITHUB_OUTPUT, `should_review=${result.shouldReview}\nreason=${result.reason}\n`)
   }
   process.stderr.write(
     result.shouldReview
-      ? "[singular-code-review] review preflight allowed request\n"
-      : `[singular-code-review] review preflight skipped request: ${result.reason}\n`
+      ? "[nibble-review] review preflight allowed request\n"
+      : `[nibble-review] review preflight skipped request: ${result.reason}\n`
   )
 }
 

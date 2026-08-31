@@ -29,7 +29,7 @@ export async function loadPullRequestInput(input, token) {
   const { owner, repo } = splitRepository(input.repository);
   const octokit = new Octokit({
     auth: token,
-    userAgent: "singular-code-review-eval",
+    userAgent: "nibble-review-eval",
   });
 
   const prResponse = await octokit.rest.pulls.get({

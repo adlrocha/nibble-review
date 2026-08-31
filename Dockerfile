@@ -4,7 +4,7 @@ FROM ${BASE_IMAGE} AS review-build
 USER root
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
-WORKDIR /tmp/singular-code-review-build
+WORKDIR /tmp/nibble-review-build
 COPY package.json package-lock.json tsconfig.json ./
 COPY scripts/ ./scripts/
 COPY src/ ./src/
@@ -13,11 +13,11 @@ COPY src/ ./src/
 RUN HUSKY=0 npm ci --include=dev \
     && npm run build \
     && npm prune --omit=dev \
-    && mkdir -p /opt/singular-code-review \
-    && cp -R dist node_modules package.json /opt/singular-code-review/ \
+    && mkdir -p /opt/nibble-review \
+    && cp -R dist node_modules package.json /opt/nibble-review/ \
     && chmod +x \
-      /opt/singular-code-review/dist/cli/review.js \
-      /opt/singular-code-review/dist/cli/preflight.js
+      /opt/nibble-review/dist/cli/review.js \
+      /opt/nibble-review/dist/cli/preflight.js
 
 FROM ${BASE_IMAGE}
 
@@ -31,7 +31,7 @@ ARG SINGULAR_SKILLS_REF=5be9e96f7423205fa9a01d7e448b69e2a3704ab5
 RUN npm install -g @upstash/context7-mcp@${CONTEXT7_MCP_VERSION} \
     && rm -rf /root/.npm
 
-RUN mkdir -p /usr/local/lib/singular-code-review
+RUN mkdir -p /usr/local/lib/nibble-review
 
 USER aml
 # Architecture skills are optional OpenCode capabilities. Pinning both source
@@ -51,12 +51,12 @@ RUN git init -q /tmp/singular-skills \
 
 USER root
 
-COPY --from=review-build /opt/singular-code-review/ /usr/local/lib/singular-code-review/
+COPY --from=review-build /opt/nibble-review/ /usr/local/lib/nibble-review/
 
 COPY bin/provision.sh /usr/local/bin/provision.sh
 
-RUN ln -sf /usr/local/lib/singular-code-review/dist/cli/review.js /usr/local/bin/review_runner \
-    && ln -sf /usr/local/lib/singular-code-review/dist/cli/preflight.js /usr/local/bin/review_preflight
+RUN ln -sf /usr/local/lib/nibble-review/dist/cli/review.js /usr/local/bin/review_runner \
+    && ln -sf /usr/local/lib/nibble-review/dist/cli/preflight.js /usr/local/bin/review_preflight
 
 RUN chmod +x /usr/local/bin/provision.sh
 

@@ -185,7 +185,7 @@ npm run eval -- \
   --out eval/runs/current-glm \
   --force \
   --skip-build \
-  --image singular-code-review:eval
+  --image nibble-review:eval
 ```
 
 Keep these fixed across the runs:

@@ -8,10 +8,10 @@ import {
 import { useReviewContext } from "./review-context.js"
 
 export const REVIEW_CONTEXT_PATHS = {
-  pullRequest: ".singular-code-review/pr.md",
-  diff: ".singular-code-review/pr.diff",
-  history: ".singular-code-review/history.md",
-  issues: ".singular-code-review/issues.md"
+  pullRequest: ".nibble-review/pr.md",
+  diff: ".nibble-review/pr.diff",
+  history: ".nibble-review/history.md",
+  issues: ".nibble-review/issues.md"
 } as const
 
 /** Materializes durable Agent evidence from the enriched review snapshot. */

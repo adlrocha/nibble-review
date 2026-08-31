@@ -29,6 +29,7 @@ export type ReviewRequest = {
   workspace: string
   workspaceHeadSha: string
   botLogin: string
+  command?: string
   eventName: string | null
   eventPath: string | null
   actor: string | null

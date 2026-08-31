@@ -726,7 +726,7 @@ function renderBenchmark(summary) {
 <html>
 <head>
   <meta charset="utf-8">
-  <title>Singular Review Eval Benchmark</title>
+  <title>Nibble Review Eval Benchmark</title>
   <style>
     :root { color-scheme: light; }
     body { font-family: Inter, ui-sans-serif, system-ui, sans-serif; margin: 0; color: #111827; background: #f8fafc; }
@@ -769,7 +769,7 @@ function renderBenchmark(summary) {
 </head>
 <body>
   <main>
-    <h1>Singular Review Eval Benchmark</h1>
+    <h1>Nibble Review Eval Benchmark</h1>
     <p class="subtitle">${averageOnly
       ? `Generated ${escapeHtml(summary.generatedAt)} from ${summary.sourceSummaries.length} run summaries. Every capture is grouped by exact model and variant.`
       : `Generated ${escapeHtml(summary.generatedAt)} from ${summary.sourceSummaries.length} run summaries. Duplicate PR/model pairs prefer completed judged evidence, then the newest equivalent result.`}</p>

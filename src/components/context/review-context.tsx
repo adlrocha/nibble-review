@@ -67,7 +67,7 @@ export type ReviewContextValue = Readonly<{
   model: string
 }>
 
-export const ReviewContext = createContext<ReviewContextValue>("SingularReview")
+export const ReviewContext = createContext<ReviewContextValue>("NibbleReview")
 
 export type ReviewContextEnvironment = Readonly<{
   github: GitHubReviewSession

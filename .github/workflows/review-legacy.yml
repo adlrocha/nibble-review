@@ -1,4 +1,4 @@
-name: Singular Code Review (legacy)
+name: Nibble Review (legacy)
 
 on:
   workflow_call:
@@ -22,7 +22,7 @@ on:
         required: false
         type: string
     secrets:
-      SINGULAR_CODE_REVIEW_PRIVATE_KEY:
+      NIBBLE_REVIEW_PRIVATE_KEY:
         description: GitHub App private key used to author review comments.
         required: true
       OPENCODE_API_KEY:
@@ -46,7 +46,7 @@ jobs:
     runs-on: "${{ inputs.runner || 'ubuntu-latest' }}"
     container:
       # The pre-AML command surface is coupled to this frozen image.
-      image: ghcr.io/we-are-singular/singular-code-review-agent:legacy
+      image: ${{ vars.REVIEW_LEGACY_IMAGE || 'ghcr.io/we-are-singular/nibble-review:legacy' }}
     env:
       GITHUB_REPOSITORY: ${{ github.repository }}
       PR_NUMBER: ${{ inputs.pr_number }}
@@ -55,7 +55,7 @@ jobs:
       OPENCODE_MODEL: ${{ vars.OPENCODE_MODEL || 'opencode-go/deepseek-flash' }}
       OPENCODE_MODEL_FALLBACK: ${{ vars.OPENCODE_MODEL_FALLBACK || 'opencode-go/deepseek-v4-flash' }}
       OPENCODE_GATE_MODEL: ${{ vars.OPENCODE_GATE_MODEL || 'opencode-go/deepseek-flash' }}
-      SINGULAR_CODE_REVIEW_INSTALL_DEPS: ${{ inputs.npm_install }}
+      NIBBLE_REVIEW_INSTALL_DEPS: ${{ inputs.npm_install }}
     steps:
       - name: Run review guard
         id: review-guard
@@ -81,8 +81,8 @@ jobs:
         id: app-token
         uses: actions/create-github-app-token@v3
         with:
-          client-id: Iv23liVgvy1yaHapd0Wx
-          private-key: ${{ secrets.SINGULAR_CODE_REVIEW_PRIVATE_KEY }}
+          client-id: ${{ vars.REVIEW_APP_CLIENT_ID || 'Iv23liVgvy1yaHapd0Wx' }}
+          private-key: ${{ secrets.NIBBLE_REVIEW_PRIVATE_KEY }}
           permission-contents: read
           permission-issues: write
           permission-pull-requests: write
@@ -117,7 +117,7 @@ jobs:
         if: steps.review-request.outputs.should_review == 'true'
         run: /usr/local/bin/provision.sh
 
-      - name: Run Singular Code Review
+      - name: Run Nibble Review
         if: steps.review-request.outputs.should_review == 'true'
         timeout-minutes: 42
         run: timeout 40m /usr/local/bin/review_runner

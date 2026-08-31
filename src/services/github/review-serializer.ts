@@ -37,7 +37,7 @@ export function serializeReviewComment(comment: ReviewInlineComment): ReviewPayl
 /** Serializes the finalized queue into the one batched GitHub review payload. */
 export function serializeReviewPayload(validated: ValidatedReviewQueue): ReviewPayload {
   return {
-    body: validated.conclusion?.trim() || "Singular Code Review completed.",
+    body: validated.conclusion?.trim() || "Nibble Review completed.",
     event: "COMMENT",
     comments: validated.inlineComments.map(serializeReviewComment)
   }

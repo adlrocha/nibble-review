@@ -38,7 +38,7 @@ export function renderGitHubStepSummary(result: ReviewRunResult): string {
     )
     .join("\n")
 
-  return `# Singular Code Review Telemetry
+  return `# Nibble Review Telemetry
 
 | Metric | Value |
 | --- | --- |

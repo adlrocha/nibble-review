@@ -74,7 +74,7 @@ async function importJavaScriptConfig(file) {
 }
 
 async function importTypeScriptConfig(file) {
-  const outDir = join(tmpdir(), "singular-code-review-eval-config");
+  const outDir = join(tmpdir(), "nibble-review-eval-config");
   mkdirSync(outDir, { recursive: true });
   const emitDir = join(outDir, `${basename(file, extname(file))}-${Date.now()}`);
   const compile = spawnSync(

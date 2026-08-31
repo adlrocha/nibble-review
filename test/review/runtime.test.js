@@ -57,7 +57,7 @@ function githubFixture(overrides = {}) {
         return overrides.diff ?? reviewDiff
       },
       async getIssueComment(commentId) {
-        return { id: commentId, body: "@singular-code-review what does this do?", user: { login: "author" } }
+        return { id: commentId, body: "@nibble-review what does this do?", user: { login: "author" } }
       },
       async listIssueComments() {
         return overrides.issueComments ?? []
@@ -128,7 +128,7 @@ function reReviewFixture(t) {
   fs.writeFileSync(eventFile, JSON.stringify({ action: "synchronize", sender: { login: "author" } }))
   t.after(() => fs.rmSync(workspace, { recursive: true, force: true }))
 
-  const botLogin = "singular-code-review[bot]"
+  const botLogin = "nibble-review[bot]"
   return {
     workspace,
     eventFile,
@@ -167,7 +167,7 @@ function options(github, workspace, overrides = {}) {
       prNumber: 42,
       workspace,
       workspaceHeadSha: "2222222222222222222222222222222222222222",
-      botLogin: "singular-code-review[bot]",
+      botLogin: "nibble-review[bot]",
       eventName: null,
       eventPath: null,
       actor: "author",
@@ -287,8 +287,8 @@ test("runtime materializes only the three Agent-readable review context files", 
     created.map(item => [item.model, item.workspace]),
     [[model, workspace]]
   )
-  const contextDirectory = path.join(workspace, ".singular-code-review")
-  assert.deepEqual(fs.readdirSync(workspace), [".singular-code-review"])
+  const contextDirectory = path.join(workspace, ".nibble-review")
+  assert.deepEqual(fs.readdirSync(workspace), [".nibble-review"])
   assert.deepEqual(fs.readdirSync(contextDirectory).sort(), ["history.md", "pr.diff", "pr.md"])
   const pullRequestContext = fs.readFileSync(path.join(contextDirectory, "pr.md"), "utf8")
   assert.match(pullRequestContext, /Review this change\./u)
@@ -597,7 +597,7 @@ test("gate answers publish through post_issue_comment without starting review la
     eventFile,
     JSON.stringify({
       action: "created",
-      comment: { id: 77, body: "@singular-code-review what does this do?", user: { login: "author" } },
+      comment: { id: 77, body: "@nibble-review what does this do?", user: { login: "author" } },
       sender: { login: "author" }
     })
   )
@@ -647,7 +647,7 @@ test("explicit re-review mentions bypass the gate Agent and start every review l
     eventFile,
     JSON.stringify({
       action: "created",
-      comment: { id: 78, body: "@singular-code-review please re-review this", user: { login: "author" } },
+      comment: { id: 78, body: "@nibble-review please re-review this", user: { login: "author" } },
       sender: { login: "author" }
     })
   )

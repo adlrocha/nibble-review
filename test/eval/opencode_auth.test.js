@@ -7,7 +7,7 @@ import test from "node:test"
 import { stageOpenCodeAuth } from "../eval/lib/opencode-auth.mjs"
 
 test("stages isolated OpenCode auth when no API key is configured", () => {
-  const scratch = mkdtempSync(join(tmpdir(), "singular-opencode-auth-"))
+  const scratch = mkdtempSync(join(tmpdir(), "nibble-opencode-auth-"))
   const sourceData = join(scratch, "source")
   const sourceDirectory = join(sourceData, "opencode")
   const targetData = join(scratch, "target")
@@ -32,7 +32,7 @@ test("stages isolated OpenCode auth when no API key is configured", () => {
 })
 
 test("leaves host auth untouched when an API key is configured", () => {
-  const scratch = mkdtempSync(join(tmpdir(), "singular-opencode-auth-"))
+  const scratch = mkdtempSync(join(tmpdir(), "nibble-opencode-auth-"))
 
   try {
     assert.deepEqual(stageOpenCodeAuth(join(scratch, "target"), { OPENCODE_API_KEY: "configured" }), [])

@@ -8,7 +8,7 @@ import test from "node:test"
 import { prepareGate } from "../dist/lib/review-gate.js"
 import { ReviewDiff } from "../dist/lib/review-diff.js"
 
-const botLogin = "singular-code-review[bot]"
+const botLogin = "nibble-review[bot]"
 
 function git(repo, args) {
   return execFileSync("git", ["-C", repo, ...args], { encoding: "utf8" }).trim()
@@ -46,7 +46,7 @@ function reviewSnapshot(options, rawDiff = "diff") {
       ? {
           id: 123,
           author: "octocat",
-          body: options.commentBody || "@singular-code-review should this run again?"
+          body: options.commentBody || "@nibble-review should this run again?"
         }
       : null
 
@@ -54,7 +54,7 @@ function reviewSnapshot(options, rawDiff = "diff") {
   return {
     generatedAt: "2026-06-15T00:00:00Z",
     botLogin,
-    command: "@singular-code-review",
+    command: "@nibble-review",
     trigger: {
       eventName: options.reason === "mention" ? "issue_comment" : "pull_request",
       reason: options.reason,
@@ -225,7 +225,7 @@ test("mention retry request bypasses the gate even when the same head was review
     base,
     head: reviewed,
     reviews: [botReview(reviewed)],
-    commentBody: "@singular-code-review can you try again?"
+    commentBody: "@nibble-review can you try again?"
   })
   const result = prepareGate(snapshot, repo)
 
@@ -239,7 +239,7 @@ test("mention with incidental try again wording still uses the gate", () => {
     base,
     head: reviewed,
     reviews: [botReview(reviewed)],
-    commentBody: "@singular-code-review why did the previous review tell me to try again?"
+    commentBody: "@nibble-review why did the previous review tell me to try again?"
   })
   const result = prepareGate(snapshot, repo)
 

@@ -53,7 +53,7 @@ function writeSummary(root, name, score, runner = "aml", provider = "opencode", 
 }
 
 test("benchmark --avg keeps repeated captures and groups them by exact model variant", () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "singular-benchmark-"))
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "nibble-benchmark-"))
   try {
     writeSummary(root, "wave-a", 70)
     writeSummary(root, "wave-b", 90)
@@ -84,7 +84,7 @@ test("benchmark --avg keeps repeated captures and groups them by exact model var
 })
 
 test("benchmark keeps src and AML evidence for the same PR and model", () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "singular-benchmark-runners-"))
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "nibble-benchmark-runners-"))
   try {
     writeSummary(root, "aml", 90, "aml", "opencode")
     writeSummary(root, "src", 80, "src", "opencode")
@@ -106,7 +106,7 @@ test("benchmark keeps src and AML evidence for the same PR and model", () => {
 })
 
 test("benchmark excludes partial runs and keeps older judged evidence over a newer failure", () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "singular-benchmark-status-"))
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "nibble-benchmark-status-"))
   try {
     writeSummary(root, "passed", 88, "aml", "opencode", {
       generatedAt: "2026-08-02T00:00:01.000Z"
@@ -142,7 +142,7 @@ test("benchmark excludes partial runs and keeps older judged evidence over a new
 })
 
 test("benchmark accepts a complete legacy summary without an explicit run status", () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "singular-benchmark-legacy-"))
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "nibble-benchmark-legacy-"))
   try {
     writeSummary(root, "legacy", 82, "src", "opencode", { omitRunStatus: true })
     const json = path.join(root, "benchmark.json")

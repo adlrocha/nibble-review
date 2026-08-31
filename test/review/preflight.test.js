@@ -22,7 +22,7 @@ test("guard allows trusted same-repository trigger comments", async () => {
           issue_url: "https://api.github.com/repos/owner/repo/issues/42",
           author_association: "MEMBER",
           user: { login: "alice", type: "User" },
-          body: "@singular-code-review please review"
+          body: "@nibble-review please review"
         }
       }
     }
@@ -107,7 +107,7 @@ test("guard does not let an untrusted PR author trigger a review", async () => {
           issue_url: "https://api.github.com/repos/owner/repo/issues/42",
           author_association: "CONTRIBUTOR",
           user: { login: "pr-author", type: "User" },
-          body: "@singular-code-review please review"
+          body: "@nibble-review please review"
         }
       }
     }
@@ -131,7 +131,7 @@ test("guard deterministically skips trusted skip commands", async () => {
           issue_url: "https://api.github.com/repos/owner/repo/issues/42",
           author_association: "MEMBER",
           user: { login: "alice", type: "User" },
-          body: "@singular-code-review skip"
+          body: "@nibble-review skip"
         }
       }
     }
@@ -155,7 +155,7 @@ test("guard does not treat incidental skip wording as a skip command", async () 
           issue_url: "https://api.github.com/repos/owner/repo/issues/42",
           author_association: "MEMBER",
           user: { login: "alice", type: "User" },
-          body: "@singular-code-review why did you skip the last review?"
+          body: "@nibble-review why did you skip the last review?"
         }
       }
     }
@@ -195,7 +195,7 @@ test("guard skips pull requests with a body skip directive", async () => {
       async getPullRequest() {
         return {
           number: 42,
-          body: "Generated update.\n\n@singular-code-review skip\n\nNo bot review needed.",
+          body: "Generated update.\n\n@nibble-review skip\n\nNo bot review needed.",
           head: { repo: { full_name: "owner/repo" } }
         }
       },
@@ -245,7 +245,7 @@ test("guard denies forks and untrusted trigger comments", async () => {
             issue_url: "https://api.github.com/repos/owner/repo/issues/42",
             author_association: "CONTRIBUTOR",
             user: { login: "alice", type: "User" },
-            body: "@singular-code-review please review"
+            body: "@nibble-review please review"
           }
         }
       }
@@ -273,7 +273,7 @@ test("guard rejects bot trigger comments from the PR author", async () => {
           issue_url: "https://api.github.com/repos/owner/repo/issues/42",
           author_association: "CONTRIBUTOR",
           user: { login: "review-bot", type: "Bot" },
-          body: "@singular-code-review please review"
+          body: "@nibble-review please review"
         }
       }
     }
@@ -297,7 +297,7 @@ test("guard matches trigger comment issue URLs by exact PR number", async () => 
           issue_url: "https://api.github.com/repos/owner/repo/issues/42",
           author_association: "MEMBER",
           user: { login: "alice", type: "User" },
-          body: "@singular-code-review please review"
+          body: "@nibble-review please review"
         }
       }
     }

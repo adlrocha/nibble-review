@@ -1,4 +1,4 @@
-name: Singular Code Review
+name: Nibble Review
 
 on:
   pull_request:
@@ -27,16 +27,16 @@ jobs:
         github.event.issue.pull_request &&
         contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association) &&
         github.event.comment.user.type != 'Bot' &&
-        contains(github.event.comment.body, '@singular-code-review'))
+        contains(github.event.comment.body, '@nibble-review'))
     concurrency:
-      group: singular-code-review-${{ github.event.issue.number || github.event.pull_request.number || github.event.inputs.pr_number }}
+      group: nibble-review-${{ github.event.issue.number || github.event.pull_request.number || github.event.inputs.pr_number }}
       cancel-in-progress: true
-    uses: we-are-singular/singular-code-review-agent/.github/workflows/review.yml@main
+    uses: we-are-singular/nibble-review/.github/workflows/review.yml@main
     with:
       pr_number: ${{ github.event.issue.number || github.event.pull_request.number || github.event.inputs.pr_number }}
       trigger_comment_id: ${{ github.event.comment.id || '' }}
-      runner: singular-code-review
+      runner: nibble-review
     secrets:
-      SINGULAR_CODE_REVIEW_PRIVATE_KEY: ${{ secrets.SINGULAR_CODE_REVIEW_PRIVATE_KEY }}
+      NIBBLE_REVIEW_PRIVATE_KEY: ${{ secrets.NIBBLE_REVIEW_PRIVATE_KEY }}
       OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
       CONTEXT7_API_KEY: ${{ secrets.CONTEXT7_API_KEY }}

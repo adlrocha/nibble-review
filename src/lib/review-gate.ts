@@ -379,7 +379,7 @@ export function prepareGate(snapshot: ReviewSnapshot, workspace: string): GatePr
       comparisonMode: delta.mode,
       decision: {
         decision: "no-review",
-        answer: "No full re-review needed: the current head commit already has a completed Singular Code Review."
+        answer: "No full re-review needed: the current head commit already has a completed Nibble Review."
       }
     }
   }

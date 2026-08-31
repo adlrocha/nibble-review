@@ -208,7 +208,7 @@ export function renderReport(summary) {
 <html>
 <head>
   <meta charset="utf-8">
-  <title>Singular Review Eval</title>
+  <title>Nibble Review Eval</title>
   <style>
     :root { color-scheme: light; }
     body { font-family: Inter, ui-sans-serif, system-ui, sans-serif; margin: 0; color: #111827; background: #f8fafc; }
@@ -255,7 +255,7 @@ export function renderReport(summary) {
 </head>
 <body>
   <main>
-    <h1>Singular Review Eval</h1>
+    <h1>Nibble Review Eval</h1>
     <p class="subtitle">Run ${escapeHtml(summary.run.startedAt || "")} to ${escapeHtml(summary.run.endedAt || "")}. Capture wall time excludes cache hits; reviewer timing follows each implementation's own internal boundary.</p>
     <section class="kpis">
       ${kpi("Run OK", `${totals.passed}/${totals.jobs}`, `${totals.hardFailed} hard failed`)}

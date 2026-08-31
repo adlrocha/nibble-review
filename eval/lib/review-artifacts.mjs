@@ -141,7 +141,7 @@ function stats(result, generatedAt, runtimeDir) {
 /** Keeps the full typed evidence inspectable without making it workflow state. */
 function transcript(result, commentExport, generatedAt) {
   const lines = [
-    "# Singular Code Review Transcript",
+    "# Nibble Review Transcript",
     "",
     `- Generated: ${generatedAt}`,
     `- Repository: ${result.repository}`,

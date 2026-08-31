@@ -9,7 +9,7 @@ import { DEFAULT_REVIEW_CONCURRENCY, DEFAULT_REVIEW_MODEL } from "../config.js"
 import { renderGitHubStepSummary } from "../lib/render/github-summary.js"
 import { ReviewUnavailableError, runReview } from "../run-review.js"
 import { createGitHubClient } from "../services/github/client.js"
-import { DEFAULT_REVIEW_BOT_LOGIN, ReviewEvidence } from "../services/review-evidence.js"
+import { DEFAULT_REVIEW_BOT_LOGIN, REVIEW_COMMAND, ReviewEvidence } from "../services/review-evidence.js"
 import { ReviewPreflight } from "../services/review-preflight.js"
 
 type CliOptions = {
@@ -135,7 +135,8 @@ export async function main(argv = process.argv.slice(2), env = process.env): Pro
     const guard = await new ReviewPreflight({
       github,
       repository: options.repository,
-      prNumber: options.prNumber
+      prNumber: options.prNumber,
+      command: env.REVIEW_COMMAND?.trim() || undefined
     }).evaluate(trigger.comment?.id || triggerCommentId)
     if (!guard.shouldReview) {
       process.stdout.write(`${JSON.stringify({ status: "skipped", reason: guard.reason })}\n`)
@@ -150,6 +151,7 @@ export async function main(argv = process.argv.slice(2), env = process.env): Pro
       workspace: options.workspace,
       workspaceHeadSha: await checkedOutHead(options.workspace),
       botLogin: env.REVIEW_BOT_LOGIN || DEFAULT_REVIEW_BOT_LOGIN,
+      command: env.REVIEW_COMMAND || REVIEW_COMMAND,
       eventName: trigger.eventName,
       eventPath: env.GITHUB_EVENT_PATH || null,
       actor: trigger.actor,

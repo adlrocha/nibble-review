@@ -191,7 +191,7 @@ function reviewOptions(t, github, overrides = {}) {
       prNumber: 42,
       workspace,
       workspaceHeadSha: "2222222222222222222222222222222222222222",
-      botLogin: "singular-code-review[bot]",
+      botLogin: "nibble-review[bot]",
       eventName: null,
       eventPath: null,
       actor: "author",
@@ -230,7 +230,7 @@ test("GitHub review sessions acknowledge comments only when live mutations are e
     prNumber: 42,
     workspace: "/tmp/review",
     workspaceHeadSha: "2222222222222222222222222222222222222222",
-    botLogin: "singular-code-review[bot]",
+    botLogin: "nibble-review[bot]",
     eventName: null,
     eventPath: null,
     actor: "author",
@@ -475,23 +475,23 @@ test("the declarative tree carries Tool findings through audit, finalization, sy
     assert.match(call.request.prompt, /<review-context>/u)
     assert.match(call.request.prompt, /<review-context>\s+## Review context/u)
     assert.doesNotMatch(call.request.prompt, /<[a-z-]+-assignment>/u)
-    assert.match(call.request.prompt, /\.singular-code-review\/pr\.md/u)
-    assert.match(call.request.prompt, /\.singular-code-review\/pr\.diff/u)
-    assert.match(call.request.prompt, /\.singular-code-review\/history\.md/u)
+    assert.match(call.request.prompt, /\.nibble-review\/pr\.md/u)
+    assert.match(call.request.prompt, /\.nibble-review\/pr\.diff/u)
+    assert.match(call.request.prompt, /\.nibble-review\/history\.md/u)
     assert.match(call.request.prompt, /Read the complete pull-request history before staging any finding/u)
     assert.match(call.request.prompt, /Do not repeat, rephrase, or insist on a semantically equivalent finding/u)
     assert.match(
       call.request.prompt,
-      /<pull-request-diff>[\s\S]*### File: `\.singular-code-review\/pr\.diff` — pull-request diff/u
+      /<pull-request-diff>[\s\S]*### File: `\.nibble-review\/pr\.diff` — pull-request diff/u
     )
     assert.match(
       call.request.prompt,
-      /<pull-request-context>[\s\S]*### File: `\.singular-code-review\/pr\.md` — pull-request context and changed files/u
+      /<pull-request-context>[\s\S]*### File: `\.nibble-review\/pr\.md` — pull-request context and changed files/u
     )
     assert.match(call.request.prompt, /Use the PR description, refs, commits, and changed-file inventory/u)
     assert.match(
       call.request.prompt,
-      /<pull-request-history>[\s\S]*### File: `\.singular-code-review\/history\.md` — pull-request history/u
+      /<pull-request-history>[\s\S]*### File: `\.nibble-review\/history\.md` — pull-request history/u
     )
     assert.match(call.request.prompt, /Audit owns retention, semantic deduplication, and calibration/u)
     assert.match(call.request.prompt, /Synthesis writes the top-level review summary/u)
@@ -574,15 +574,15 @@ test("the declarative tree carries Tool findings through audit, finalization, sy
   assert.match(audit.request.prompt, /`get_full_comment` with its `#ID` and kind/u)
   assert.match(
     audit.request.prompt,
-    /<pull-request-history>[\s\S]*### File: `\.singular-code-review\/history\.md` — pull-request history/u
+    /<pull-request-history>[\s\S]*### File: `\.nibble-review\/history\.md` — pull-request history/u
   )
   assert.match(audit.request.prompt, /Prefer retaining no more than 24 findings/u)
   assert.match(audit.request.prompt, /Do not discard distinct material feedback merely to reach this preference/u)
   assert.doesNotMatch(audit.request.prompt, /hard safety ceiling/u)
   assert.doesNotMatch(audit.request.prompt, /lane_assessments/u)
-  assert.doesNotMatch(audit.request.prompt, /\.singular-code-review\/pr\.diff/u)
+  assert.doesNotMatch(audit.request.prompt, /\.nibble-review\/pr\.diff/u)
   assert.match(audit.request.prompt, /author\.\n\n<staged-findings>\n\{\n  "findings"/u)
-  assert.match(audit.request.prompt, /\n\}\n<\/staged-findings>\n\nUse \.singular-code-review\/pr\.md/u)
+  assert.match(audit.request.prompt, /\n\}\n<\/staged-findings>\n\nUse \.nibble-review\/pr\.md/u)
   let previousHandoff = -1
   for (const lane of laneNames) {
     const handoff = audit.request.prompt.indexOf(`## ${laneHeadings[lane]}`)
@@ -714,7 +714,7 @@ test("follow-up synthesis renders the since-last-review summary when supplied", 
     reviews: [
       {
         id: 88,
-        user: { login: "singular-code-review[bot]" },
+        user: { login: "nibble-review[bot]" },
         body: "Previous review body.",
         state: "COMMENTED",
         submitted_at: "2026-08-29T11:00:00Z",
@@ -757,7 +757,7 @@ test("a comparable follow-up falls back to the full summary when the delta is nu
     reviews: [
       {
         id: 92,
-        user: { login: "singular-code-review[bot]" },
+        user: { login: "nibble-review[bot]" },
         body: "Previous review body.",
         state: "COMMENTED",
         submitted_at: "2026-08-29T11:00:00Z",
@@ -814,7 +814,7 @@ test("a comparable material direction change may still render since-last-review 
     reviews: [
       {
         id: 89,
-        user: { login: "singular-code-review[bot]" },
+        user: { login: "nibble-review[bot]" },
         body: "Previous review body.",
         state: "COMMENTED",
         submitted_at: "2026-08-29T11:00:00Z",
@@ -850,7 +850,7 @@ test("an unavailable previous commit forces the complete summary fallback", asyn
     reviews: [
       {
         id: 91,
-        user: { login: "singular-code-review[bot]" },
+        user: { login: "nibble-review[bot]" },
         body: "Previous review body.",
         state: "COMMENTED",
         submitted_at: "2026-08-29T11:00:00Z",
@@ -883,7 +883,7 @@ test("oversized comparison evidence forces the complete summary fallback", async
     reviews: [
       {
         id: 94,
-        user: { login: "singular-code-review[bot]" },
+        user: { login: "nibble-review[bot]" },
         body: "Previous review body.",
         state: "COMMENTED",
         submitted_at: "2026-08-29T11:00:00Z",
@@ -916,12 +916,12 @@ test("review history comparison distinguishes rebases from changed force-pushes"
   const equivalent = rewrittenHistoryFixture(t, "export const state = 'reviewed'\n")
   const changed = rewrittenHistoryFixture(t, "export const replacement = 'new objective'\n")
   const snapshot = history => ({
-    botLogin: "singular-code-review[bot]",
+    botLogin: "nibble-review[bot]",
     pullRequest: { baseRefOid: history.base, headRefOid: history.head },
     reviews: [
       {
         id: 90,
-        user: { login: "singular-code-review[bot]" },
+        user: { login: "nibble-review[bot]" },
         commit_id: history.reviewed
       }
     ]
@@ -949,7 +949,7 @@ test("a contained synchronize renders a concise since-last-review body", async t
     reviews: [
       {
         id: 93,
-        user: { login: "singular-code-review[bot]" },
+        user: { login: "nibble-review[bot]" },
         body: "Previous review body.",
         state: "COMMENTED",
         submitted_at: "2026-08-29T11:00:00Z",
@@ -999,7 +999,7 @@ test("a same-head synchronize renders a neutral review summary", async t => {
     reviews: [
       {
         id: 95,
-        user: { login: "singular-code-review[bot]" },
+        user: { login: "nibble-review[bot]" },
         body: "Previous review body.",
         state: "COMMENTED",
         submitted_at: "2026-08-29T11:00:00Z",
@@ -1035,7 +1035,7 @@ test("a no-review gate decision without prior history escalates to a full review
     JSON.stringify({
       action: "created",
       sender: { login: "author" },
-      comment: { id: 123, body: "@singular-code-review is this ready?", user: { login: "author" } }
+      comment: { id: 123, body: "@nibble-review is this ready?", user: { login: "author" } }
     })
   )
   const github = fakeGitHub()
@@ -1458,7 +1458,7 @@ test("deterministic validation drops an existing bot finding before deriving the
     reviewComments: [
       {
         id: 900,
-        user: { login: "singular-code-review[bot]" },
+        user: { login: "nibble-review[bot]" },
         body,
         path: "src/example.ts",
         line: 12,
@@ -1492,7 +1492,7 @@ test("full reviews preserve a direct trigger answer before the review summary", 
       action: "created",
       comment: {
         id: 77,
-        body: "@singular-code-review please review this and tell me whether stale responses stay blocked",
+        body: "@nibble-review please review this and tell me whether stale responses stay blocked",
         user: { login: "author" }
       },
       sender: { login: "author" }
@@ -1526,7 +1526,7 @@ test("thread-only reply requests cannot leak into the top-level review body", as
     reviewComments: [
       {
         id: 123,
-        user: { login: "singular-code-review[bot]" },
+        user: { login: "nibble-review[bot]" },
         body: "The stale-state path remains reachable.",
         path: "src/example.ts",
         line: 12,
@@ -1547,11 +1547,11 @@ test("thread-only reply requests cannot leak into the top-level review body", as
           side: "RIGHT",
           start_side: null,
           top_level_comment_id: 123,
-          top_level_author: "singular-code-review[bot]",
+          top_level_author: "nibble-review[bot]",
           latest_author: "author",
           latest_comment_id: 124,
           comments: [
-            { id: 123, body: "The stale-state path remains reachable.", user: { login: "singular-code-review[bot]" } },
+            { id: 123, body: "The stale-state path remains reachable.", user: { login: "nibble-review[bot]" } },
             { id: 124, body: "Does the latest push resolve this?", user: { login: "author" } }
           ]
         }
@@ -1591,7 +1591,7 @@ test("thread-only reply requests cannot leak into the top-level review body", as
 
 function queueOptions() {
   return {
-    botLogin: "singular-code-review[bot]",
+    botLogin: "nibble-review[bot]",
     commentRanges: {
       "src/example.ts": {
         added_lines: [12],

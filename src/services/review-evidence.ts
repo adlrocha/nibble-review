@@ -13,8 +13,8 @@ import type { ReviewActionItem, ReviewRequest, ReviewSnapshot, ReviewTrigger } f
 import type { DiffFile, ValidCommentRanges } from "../lib/review-diff.js"
 import { compactContextText, type CompactPullRequestContext } from "./github/context-model.js"
 
-export const REVIEW_COMMAND = "@singular-code-review"
-export const DEFAULT_REVIEW_BOT_LOGIN = "singular-code-review[bot]"
+export const REVIEW_COMMAND = "@nibble-review"
+export const DEFAULT_REVIEW_BOT_LOGIN = "nibble-review[bot]"
 
 // Active requests need more room than historical events because the current run must answer them accurately.
 const ACTION_TEXT_LIMIT = 1_600
@@ -109,7 +109,7 @@ export class ReviewEvidence {
     return Object.freeze({
       generatedAt: new Date().toISOString(),
       botLogin: this.#input.request.botLogin,
-      command: REVIEW_COMMAND,
+      command: this.#command(),
       trigger: this.#input.trigger,
       pullRequest: this.#input.pullRequest,
       diff: this.#input.diff,
@@ -225,10 +225,14 @@ export class ReviewEvidence {
     return items
   }
 
+  #command(): string {
+    return this.#input.request.command || REVIEW_COMMAND
+  }
+
   #mentionsReviewer(body: unknown): boolean {
     const text = String(body || "").toLowerCase()
     const bot = this.#input.request.botLogin.toLowerCase()
-    return text.includes(REVIEW_COMMAND) || text.includes(`@${bot}`)
+    return text.includes(this.#command().toLowerCase()) || text.includes(`@${bot}`)
   }
 
   #latestBotActivity(): number | null {

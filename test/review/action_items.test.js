@@ -3,7 +3,7 @@ import test from "node:test"
 
 import { ReviewEvidence } from "../dist/services/review-evidence.js"
 
-const botLogin = "singular-code-review[bot]"
+const botLogin = "nibble-review[bot]"
 
 function trigger(overrides = {}) {
   return {
@@ -66,7 +66,7 @@ function actionItems(overrides = {}) {
 
 test("push-triggered runs ignore mention comments already followed by a bot review", () => {
   const items = actionItems({
-    issueComments: [issueComment(10, "@singular-code-review can you try again?", "2026-06-17T00:25:00Z")],
+    issueComments: [issueComment(10, "@nibble-review can you try again?", "2026-06-17T00:25:00Z")],
     reviews: [botReview("2026-06-17T00:31:00Z")]
   })
 
@@ -75,7 +75,7 @@ test("push-triggered runs ignore mention comments already followed by a bot revi
 
 test("push-triggered runs keep mention comments newer than the latest bot activity", () => {
   const items = actionItems({
-    issueComments: [issueComment(10, "@singular-code-review can you try again?", "2026-06-17T00:35:00Z")],
+    issueComments: [issueComment(10, "@nibble-review can you try again?", "2026-06-17T00:35:00Z")],
     reviews: [botReview("2026-06-17T00:31:00Z")]
   })
 
@@ -84,7 +84,7 @@ test("push-triggered runs keep mention comments newer than the latest bot activi
       id: "issue-comment:10",
       kind: "mentioned",
       actor: "octocat",
-      body: "@singular-code-review can you try again?",
+      body: "@nibble-review can you try again?",
       commentId: 10,
       createdAt: "2026-06-17T00:35:00Z"
     }
@@ -94,7 +94,7 @@ test("push-triggered runs keep mention comments newer than the latest bot activi
 test("bot issue-comment answers also make older mention comments stale", () => {
   const items = actionItems({
     issueComments: [
-      issueComment(10, "@singular-code-review does this still apply?", "2026-06-17T00:25:00Z"),
+      issueComment(10, "@nibble-review does this still apply?", "2026-06-17T00:25:00Z"),
       issueComment(11, "Yes, that finding still applies.", "2026-06-17T00:26:00Z", botLogin)
     ]
   })
@@ -103,7 +103,7 @@ test("bot issue-comment answers also make older mention comments stale", () => {
 })
 
 test("direct trigger comments are represented once as trigger requests", () => {
-  const comment = issueComment(10, "@singular-code-review can you try again?", "2026-06-17T00:35:00Z")
+  const comment = issueComment(10, "@nibble-review can you try again?", "2026-06-17T00:35:00Z")
   const items = actionItems({
     trigger: trigger({
       eventName: "issue_comment",
@@ -122,7 +122,7 @@ test("direct trigger comments are represented once as trigger requests", () => {
       id: "issue-comment:10",
       kind: "trigger_request",
       actor: "octocat",
-      body: "@singular-code-review can you try again?",
+      body: "@nibble-review can you try again?",
       commentId: 10
     }
   ])

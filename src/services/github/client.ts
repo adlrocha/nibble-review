@@ -458,7 +458,7 @@ function normalizeReviewThread(node: GraphQLThreadNode): ReviewThread {
 export function createGitHubClient(options: { token: string; repository: string }): GitHubClient {
   const octokit = new Octokit({
     auth: options.token,
-    userAgent: "singular-code-review-agent"
+    userAgent: "nibble-review"
   })
 
   // Issue and PR numbers share a namespace. Query the union first because

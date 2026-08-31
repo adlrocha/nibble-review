@@ -12,15 +12,18 @@ export class ReviewPreflight {
   readonly #github: Pick<GitHubClient, "getPullRequest" | "getIssueComment">
   readonly #repository: string
   readonly #prNumber: number
+  readonly #command: string
 
   constructor(options: {
     github: Pick<GitHubClient, "getPullRequest" | "getIssueComment">
     repository: string
     prNumber: number
+    command?: string
   }) {
     this.#github = options.github
     this.#repository = options.repository
     this.#prNumber = options.prNumber
+    this.#command = options.command || REVIEW_COMMAND
   }
 
   /** Verifies one workflow request before trusted credentials reach PR code. */
@@ -78,8 +81,8 @@ export class ReviewPreflight {
     if (!TRUSTED_ASSOCIATIONS.has(comment.author_association || "")) {
       return { shouldReview: false, reason: "trigger comment author is not trusted" }
     }
-    if (!String(comment.body || "").includes(REVIEW_COMMAND)) {
-      return { shouldReview: false, reason: `trigger comment does not mention ${REVIEW_COMMAND}` }
+    if (!String(comment.body || "").includes(this.#command)) {
+      return { shouldReview: false, reason: `trigger comment does not mention ${this.#command}` }
     }
     if (this.#requestsSkip(comment.body)) {
       return { shouldReview: false, reason: "trigger comment requested skip" }
@@ -94,8 +97,8 @@ export class ReviewPreflight {
       .toLowerCase()
       .split(/\r?\n/u)
       .some(line => {
-        const mention = line.indexOf(REVIEW_COMMAND)
-        return mention >= 0 && SKIP_COMMAND_PATTERN.test(line.slice(mention + REVIEW_COMMAND.length).trim())
+        const mention = line.indexOf(this.#command)
+        return mention >= 0 && SKIP_COMMAND_PATTERN.test(line.slice(mention + this.#command.length).trim())
       })
   }
 

@@ -1,8 +1,8 @@
 {
-  "name": "singular-code-review-agent",
+  "name": "nibble-review",
   "version": "0.2.0",
   "private": true,
-  "description": "AML-powered pull request review agent for the Singular Code Review GitHub App.",
+  "description": "AML-powered pull request review agent for the Nibble Review GitHub App.",
   "bin": {
     "review_preflight": "dist/cli/preflight.js",
     "review_runner": "dist/cli/review.js"

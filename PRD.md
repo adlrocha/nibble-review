@@ -1,8 +1,8 @@
-# Singular Code Review Product Contract
+# Nibble Review Product Contract
 
 ## Purpose
 
-Singular Code Review provides actionable, evidence-backed pull-request review with the consistency of a managed application and the repository awareness of a coding agent. The current repository owns the review engine, image, reusable GitHub Actions workflow, and evaluation harness. Account, subscription, and repository-management surfaces are future control-plane work.
+Nibble Review provides actionable, evidence-backed pull-request review with the consistency of a managed application and the repository awareness of a coding agent. The current repository owns the review engine, image, reusable GitHub Actions workflow, and evaluation harness. Account, subscription, and repository-management surfaces are future control-plane work.
 
 ## Product goals
 

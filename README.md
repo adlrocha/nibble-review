@@ -1,6 +1,8 @@
-# Singular Code Review
+# Nibble Review
 
-Singular Code Review is the pull-request reviewer we run on our own repositories at [Singular](https://github.com/we-are-singular). It reads the code around a diff, gives the change to six focused reviewers, audits their findings, and publishes one GitHub review.
+> [!NOTE] This is [@adlrocha](https://github.com/adlrocha)'s fork of [we-are-singular/nibble-review](https://github.com/we-are-singular/nibble-review), fully rebranded to **nibble-review** and parameterized so any GitHub App identity can run it (custom mention command, App client ID, and image via repository variables). To run it on your own repositories, follow [docs/SETUP.md](docs/SETUP.md) or ask the setup skill: `scripts/setup-review-bot.sh --help`.
+
+Nibble Review is the pull-request reviewer we run on our own repositories at [Singular](https://github.com/we-are-singular). It reads the code around a diff, gives the change to six focused reviewers, audits their findings, and publishes one GitHub review.
 
 The reviewer is written with [Agent Markup Language (AML)](https://agent-markup-language.com/). The review tree is declarative; TypeScript owns the GitHub snapshot, finding queue, validation, verdict, and publication.
 
@@ -119,10 +121,10 @@ Models investigate and write. They do not decide which commit was reviewed, whet
 
 ### Use it locally before pushing
 
-You do not need to deploy the GitHub App to use the review policy while you work. The [singular-code-review skill](https://www.skills.sh/we-are-singular/skills/singular-code-review) packages the same review guidelines and checks into a `SKILL.md`, so a skill-compatible coding agent can inspect the local diff before it reaches the repository.
+You do not need to deploy the GitHub App to use the review policy while you work. The [nibble-review skill](https://www.skills.sh/we-are-singular/skills/nibble-review) packages the same review guidelines and checks into a `SKILL.md`, so a skill-compatible coding agent can inspect the local diff before it reaches the repository.
 
 ```bash
-npx skills add https://github.com/we-are-singular/skills --skill singular-code-review
+npx skills add https://github.com/we-are-singular/skills --skill nibble-review
 ```
 
 Use the skill "at home" to catch problems before pushing; the GitHub App handles the full pull-request review and publication pipeline.
@@ -131,18 +133,18 @@ Use the skill "at home" to catch problems before pushing; the GitHub App handles
 
 Repositories that can use the Singular-owned App need the App installed plus these Actions secrets:
 
-- `SINGULAR_CODE_REVIEW_PRIVATE_KEY` for the App;
+- `NIBBLE_REVIEW_PRIVATE_KEY` for the App;
 - `OPENCODE_API_KEY` for the production model;
 - `CONTEXT7_API_KEY` when higher Context7 limits are needed.
 
-Copy [examples/singular-code-review.yml](examples/singular-code-review.yml) into the target repository under `.github/workflows/`. The workflow handles opened PRs, ready-for-review drafts, new heads, manual dispatches, and `@singular-code-review` comments from repository owners, organization members, and collaborators.
+Copy [examples/nibble-review.yml](examples/nibble-review.yml) into the target repository under `.github/workflows/`. The workflow handles opened PRs, ready-for-review drafts, new heads, manual dispatches, and `@nibble-review` comments from repository owners, organization members, and collaborators.
 
 ### Fork it and make it yours
 
 1. Fork this repository.
 2. Create a GitHub App with `Contents: read`, `Issues: write`, and `Pull requests: write`, then install it on the repositories you want reviewed.
 3. Update the App client ID and container image in [.github/workflows/review.yml](.github/workflows/review.yml). The image should point at your fork's GHCR package.
-4. Update the reusable-workflow owner in [examples/singular-code-review.yml](examples/singular-code-review.yml) from `we-are-singular` to your GitHub owner.
+4. Update the reusable-workflow owner in [examples/nibble-review.yml](examples/nibble-review.yml) from `we-are-singular` to your GitHub owner.
 5. If you rename the bot, change the mention and default bot login in [src/services/review-evidence.ts](src/services/review-evidence.ts), then update the example workflow trigger.
 6. Push to your fork's `main` branch to publish `ghcr.io/YOUR_OWNER/YOUR_REPOSITORY:latest`.
 7. Store your App private key and model credentials as repository or organization secrets in each consuming repository, then copy your edited trigger workflow there.
@@ -170,7 +172,7 @@ The runner writes concise review progress to standard error while keeping its co
 
 Dependency installation is opt-in because package scripts run with the review job's credentials available. Enable it only for trusted repositories where installed dependencies materially improve the review.
 
-Start a PR title with `[skip]`, or put `@singular-code-review skip` on its own line in the PR body, to stop before App-token creation, checkout, dependency installation, and model work.
+Start a PR title with `[skip]`, or put `@nibble-review skip` on its own line in the PR body, to stop before App-token creation, checkout, dependency installation, and model work.
 
 ## Trust and failure boundaries
 
@@ -223,7 +225,7 @@ npm ci
 npm test
 npm run lint
 npm run format:check
-docker build -t singular-code-review:local .
+docker build -t nibble-review:local .
 ```
 
 Run one real pull request through the production review boundary without publishing to GitHub:
@@ -243,8 +245,8 @@ The evaluator prepares the exact checkout outside the image, mounts it into the 
 Successful pushes to `main` publish:
 
 ```text
-ghcr.io/we-are-singular/singular-code-review-agent:latest
-ghcr.io/we-are-singular/singular-code-review-agent:sha-<commit>
+ghcr.io/we-are-singular/nibble-review:latest
+ghcr.io/we-are-singular/nibble-review:sha-<commit>
 ```
 
 Version tags publish matching image tags. The final pre-[AML](https://agent-markup-language.com/) reviewer is frozen as the manually published `legacy` tag with a matching [.github/workflows/review-legacy.yml](.github/workflows/review-legacy.yml). Normal pushes do not update it. It is a rollback path for Singular's existing deployment and does not receive new review features.

@@ -12,7 +12,7 @@ import { ReviewContextPrompt } from "../dist/components/review-context-prompt.js
 
 function materializeContext(t, diff) {
   const workspace = fs.mkdtempSync(path.join(os.tmpdir(), "review-context-prompt-"))
-  const directory = path.join(workspace, ".singular-code-review")
+  const directory = path.join(workspace, ".nibble-review")
   fs.mkdirSync(directory)
   fs.writeFileSync(
     path.join(directory, "pr.md"),
@@ -57,7 +57,7 @@ test("ReviewContextPrompt includes selected materialized files in tagged section
 
   assert.deepEqual(request.skills, [])
   assert.match(output, /<pull-request-context>/u)
-  assert.match(output, /### File: `\.singular-code-review\/pr\.md` — pull-request context and changed files/u)
+  assert.match(output, /### File: `\.nibble-review\/pr\.md` — pull-request context and changed files/u)
   assert.match(
     output,
     /Use the PR description, refs, commits, and changed-file inventory as intent and scope evidence/u
@@ -66,16 +66,16 @@ test("ReviewContextPrompt includes selected materialized files in tagged section
   assert.match(output, /Explain the intended change\./u)
   assert.match(output, /src\/example\.ts/u)
   assert.match(output, /<pull-request-diff>/u)
-  assert.match(output, /### File: `\.singular-code-review\/pr\.diff` — pull-request diff/u)
+  assert.match(output, /### File: `\.nibble-review\/pr\.diff` — pull-request diff/u)
   assert.match(output, /one two\nthree/u)
   assert.match(output, /<pull-request-history>/u)
-  assert.match(output, /### File: `\.singular-code-review\/history\.md` — pull-request history/u)
+  assert.match(output, /### File: `\.nibble-review\/history\.md` — pull-request history/u)
   assert.doesNotMatch(output, /exceeding the 32768-byte inline limit/u)
 })
 
 test("ReviewContextPrompt reads each materialized file live for every evaluation", async t => {
   const workspace = materializeContext(t, "one two\nthree")
-  const historyPath = path.join(workspace, ".singular-code-review", "history.md")
+  const historyPath = path.join(workspace, ".nibble-review", "history.md")
 
   const { output: first } = await render(workspace, { history: true })
   fs.writeFileSync(historyPath, "# Pull request history\n\nA new decision was recorded.\n")
@@ -90,7 +90,7 @@ test("ReviewContextPrompt keeps an empty materialized file inline", async t => {
   const { output } = await render(workspace, { diff: true })
 
   assert.match(output, /<pull-request-diff>/u)
-  assert.match(output, /### File: `\.singular-code-review\/pr\.diff` — pull-request diff/u)
+  assert.match(output, /### File: `\.nibble-review\/pr\.diff` — pull-request diff/u)
   assert.doesNotMatch(output, /exceeding the 32768-byte inline limit/u)
   assert.doesNotMatch(output, /\(Empty\.\)/u)
 })

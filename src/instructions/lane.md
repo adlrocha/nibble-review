@@ -42,7 +42,7 @@ Account for every closing issue supplied in the review context and each current 
 
 `Context7` is available when a conclusion depends on current external library or platform semantics. Use it to settle material uncertainty, not as a mandatory search step.
 
-The read-only GitHub Tools provide compact structured PR, issue, comment, commit, and diff evidence through the request cache. Use them when structured reinspection or a referenced GitHub entity helps the investigation. The materialized `.singular-code-review` files remain available through provider-native file reads when you need to consult the exact review snapshot.
+The read-only GitHub Tools provide compact structured PR, issue, comment, commit, and diff evidence through the request cache. Use them when structured reinspection or a referenced GitHub entity helps the investigation. The materialized `.nibble-review` files remain available through provider-native file reads when you need to consult the exact review snapshot.
 
 ## Supported findings
 

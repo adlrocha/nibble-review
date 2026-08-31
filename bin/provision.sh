@@ -2,7 +2,7 @@
 set -euo pipefail
 
 log() {
-  printf '[singular-code-review] %s\n' "$*" >&2
+  printf '[nibble-review] %s\n' "$*" >&2
 }
 
 die() {
@@ -28,7 +28,7 @@ resolve_workspace() {
 
 install_dependencies() {
   local workspace="$1"
-  local install_deps="${SINGULAR_CODE_REVIEW_INSTALL_DEPS:-false}"
+  local install_deps="${NIBBLE_REVIEW_INSTALL_DEPS:-false}"
 
   case "${install_deps,,}" in
     true|1|yes|on)

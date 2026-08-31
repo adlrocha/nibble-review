@@ -12,7 +12,7 @@ The Go API advertises `deepseek-flash`; [OpenCode maps that name to DeepSeek V4.
 
 ## Confirmed token gap
 
-An offline reproduction on 2026-09-11 used the existing `singular-code-review:eval` image (`bce18dfdcdbc`), OpenCode 1.18.18 and AML SDK 0.8.1. A local fake OpenAI-compatible endpoint returned deterministic usage for a read-tool call followed by a final response. Docker ran with `--network none`; no provider credentials or paid inference were used.
+An offline reproduction on 2026-09-11 used the existing `nibble-review:eval` image (`bce18dfdcdbc`), OpenCode 1.18.18 and AML SDK 0.8.1. A local fake OpenAI-compatible endpoint returned deterministic usage for a read-tool call followed by a final response. Docker ran with `--network none`; no provider credentials or paid inference were used.
 
 | Model request                                        | Input including cache | Output including reasoning | Total |
 | ---------------------------------------------------- | --------------------: | -------------------------: | ----: |
@@ -56,10 +56,10 @@ These are deterministic fixture counters, not a measured production multiplier. 
 ```bash
 for mode in normal retry failure parallel; do
   docker run --rm --network none -e FIXTURE_MODE="$mode" \
-    --mount "type=bind,source=$PWD/test/fixtures/opencode-usage.mjs,target=/usr/local/lib/singular-code-review/test/fixtures/opencode-usage.mjs,readonly" \
-    --mount "type=bind,source=$PWD/dist,target=/usr/local/lib/singular-code-review/dist,readonly" \
-    --entrypoint node singular-code-review:eval \
-    /usr/local/lib/singular-code-review/test/fixtures/opencode-usage.mjs || break
+    --mount "type=bind,source=$PWD/test/fixtures/opencode-usage.mjs,target=/usr/local/lib/nibble-review/test/fixtures/opencode-usage.mjs,readonly" \
+    --mount "type=bind,source=$PWD/dist,target=/usr/local/lib/nibble-review/dist,readonly" \
+    --entrypoint node nibble-review:eval \
+    /usr/local/lib/nibble-review/test/fixtures/opencode-usage.mjs || break
 done
 ```
 

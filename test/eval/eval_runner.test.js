@@ -30,7 +30,7 @@ const input = {
 }
 
 test("review process settles at the timeout even when the child ignores SIGTERM", async () => {
-  const directory = mkdtempSync(join(tmpdir(), "singular-eval-runner-"))
+  const directory = mkdtempSync(join(tmpdir(), "nibble-eval-runner-"))
   const started = Date.now()
   const result = await runProcess({
     command: process.execPath,
@@ -48,7 +48,7 @@ test("review process settles at the timeout even when the child ignores SIGTERM"
 })
 
 test("judge config follows the capture unless explicitly overridden", () => {
-  const directory = mkdtempSync(join(tmpdir(), "singular-eval-judge-config-"))
+  const directory = mkdtempSync(join(tmpdir(), "nibble-eval-judge-config-"))
   const capturedConfig = join(directory, "capture.ts")
   const explicitConfig = join(directory, "override.ts")
 
@@ -58,7 +58,7 @@ test("judge config follows the capture unless explicitly overridden", () => {
 })
 
 test("judge retries preserve prior raw evidence and update canonical aliases", t => {
-  const directory = mkdtempSync(join(tmpdir(), "singular-eval-judge-attempts-"))
+  const directory = mkdtempSync(join(tmpdir(), "nibble-eval-judge-attempts-"))
   t.after(() => rmSync(directory, { recursive: true, force: true }))
   writeFileSync(join(directory, "judge.raw.jsonl"), "first raw\n")
   writeFileSync(join(directory, "judge.stderr.log"), "first stderr\n")
@@ -132,7 +132,7 @@ test("stale cleanup ignores fresh and unowned evaluator leases", () => {
 })
 
 test("run checkpoints are running and final snapshots receive endedAt", () => {
-  const directory = mkdtempSync(join(tmpdir(), "singular-eval-run-file-"))
+  const directory = mkdtempSync(join(tmpdir(), "nibble-eval-run-file-"))
   const runConfig = { startedAt: "2026-08-24T00:00:00.000Z", models: ["test-model"] }
   const args = { outDir: directory, runConfig, preservedJobs: [], results: [] }
 
@@ -149,7 +149,7 @@ test("run checkpoints are running and final snapshots receive endedAt", () => {
 })
 
 test("completed capture reuse requires a valid result and every canonical artifact", () => {
-  const directory = mkdtempSync(join(tmpdir(), "singular-eval-artifacts-"))
+  const directory = mkdtempSync(join(tmpdir(), "nibble-eval-artifacts-"))
   mkdirSync(join(directory, "artifacts"))
   for (const file of [
     "review.md",
@@ -177,7 +177,7 @@ test("completed capture reuse requires a valid result and every canonical artifa
 })
 
 test("canonical capture artifacts reject malformed required JSON", () => {
-  const directory = mkdtempSync(join(tmpdir(), "singular-eval-artifacts-json-"))
+  const directory = mkdtempSync(join(tmpdir(), "nibble-eval-artifacts-json-"))
   mkdirSync(join(directory, "artifacts"))
   for (const file of [
     "review.md",
@@ -203,7 +203,7 @@ test("canonical capture artifacts reject malformed required JSON", () => {
 })
 
 test("canonical capture artifacts require provider completion evidence", () => {
-  const directory = mkdtempSync(join(tmpdir(), "singular-eval-provider-completions-"))
+  const directory = mkdtempSync(join(tmpdir(), "nibble-eval-provider-completions-"))
   mkdirSync(join(directory, "artifacts"))
   for (const file of [
     "review.md",

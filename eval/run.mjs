@@ -48,9 +48,9 @@ const JUDGE_ARTIFACTS = [
   "pr.diff",
 ]
 const activeDockerContainers = new Set()
-const EVAL_OWNER_LABEL = "singular-code-review-eval-owner"
+const EVAL_OWNER_LABEL = "nibble-review-eval-owner"
 const EVAL_OWNER_ID = randomUUID()
-const EVAL_OWNER_DIR = join(tmpdir(), "singular-code-review-eval", "owners")
+const EVAL_OWNER_DIR = join(tmpdir(), "nibble-review-eval", "owners")
 const EVAL_OWNER_LEASE = join(EVAL_OWNER_DIR, EVAL_OWNER_ID)
 const OWNER_HEARTBEAT_MS = 5_000
 const OWNER_STALE_AFTER_MS = 15_000
@@ -113,7 +113,7 @@ function cleanupStaleDockerContainers() {
     [
       "ps",
       "--filter",
-      "label=singular-code-review-eval=true",
+      "label=nibble-review-eval=true",
       "--format",
       `{{.Names}}\t{{.Label "${EVAL_OWNER_LABEL}"}}`,
     ],
@@ -368,7 +368,7 @@ function parseArgs(argv) {
     force: false,
     cacheDir: resolve(repoRoot, "eval", "cache", "reviews"),
     useConfigInput: true,
-    image: "singular-code-review:eval",
+    image: "nibble-review:eval",
     baseImage: undefined,
     skipBuild: false,
   }
@@ -432,7 +432,7 @@ Options:
   --append                  Add missing PR x model jobs to an existing --out run
   --force                   Bypass the global review cache for jobs that run
   --cache-dir <dir>         Global review cache. Default: eval/cache/reviews
-  --image <tag>             Docker image tag. Default: singular-code-review:eval
+  --image <tag>             Docker image tag. Default: nibble-review:eval
   --base-image <tag>        AML base image. Example: wearesingular/aml-agent-sandbox:0.5.2-opencode
   --skip-build              Use the existing image instead of building Dockerfile
   --no-config-input         Use only --pr values, ignoring config.input
@@ -634,10 +634,10 @@ async function runJob(job, options) {
   const stdoutFile = join(jobDir, "docker.stdout.log")
   const stderrFile = join(jobDir, "docker.stderr.log")
   const artifactDir = join(jobDir, "artifacts")
-  const containerName = `singular-eval-${EVAL_OWNER_ID.slice(0, 8)}-${job.index}-${Date.now()}`
+  const containerName = `nibble-eval-${EVAL_OWNER_ID.slice(0, 8)}-${job.index}-${Date.now()}`
   // Keep credentials and the checkout in sibling mounts. Exposing the same
   // checkout under a second container path makes OpenCode reject the alias.
-  const scratchDir = join(tmpdir(), "singular-code-review-eval", containerName)
+  const scratchDir = join(tmpdir(), "nibble-review-eval", containerName)
   const runtimeDir = join(scratchDir, "runtime")
   const workspaceDir = join(scratchDir, "workspace")
 
@@ -706,7 +706,7 @@ async function runJob(job, options) {
       "--name",
       containerName,
       "--label",
-      "singular-code-review-eval=true",
+      "nibble-review-eval=true",
       "--label",
       `${EVAL_OWNER_LABEL}=${EVAL_OWNER_ID}`,
       "--entrypoint",
@@ -718,19 +718,19 @@ async function runJob(job, options) {
       "--env",
       "REVIEW_IGNORE_HISTORY",
       "--env",
-      "HOME=/tmp/.singular-code-review/eval-runtime/home",
+      "HOME=/tmp/.nibble-review/eval-runtime/home",
       "--env",
-      "XDG_CONFIG_HOME=/tmp/.singular-code-review/eval-runtime/xdg/config",
+      "XDG_CONFIG_HOME=/tmp/.nibble-review/eval-runtime/xdg/config",
       "--env",
-      "XDG_DATA_HOME=/tmp/.singular-code-review/eval-runtime/xdg/data",
+      "XDG_DATA_HOME=/tmp/.nibble-review/eval-runtime/xdg/data",
       "--env",
-      "XDG_CACHE_HOME=/tmp/.singular-code-review/eval-runtime/xdg/cache",
+      "XDG_CACHE_HOME=/tmp/.nibble-review/eval-runtime/xdg/cache",
       "--env",
-      "XDG_STATE_HOME=/tmp/.singular-code-review/eval-runtime/xdg/state",
+      "XDG_STATE_HOME=/tmp/.nibble-review/eval-runtime/xdg/state",
       ...reviewer.inheritedEnvironment.flatMap(key => ["--env", key]),
       ...Object.keys(reviewer.environment).flatMap(key => ["--env", key]),
       "--volume",
-      `${runtimeDir}:/tmp/.singular-code-review/eval-runtime`,
+      `${runtimeDir}:/tmp/.nibble-review/eval-runtime`,
       "--volume",
       `${workspaceDir}:/workspace`,
       options.image,

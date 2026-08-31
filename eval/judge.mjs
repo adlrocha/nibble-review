@@ -218,7 +218,7 @@ function normalizeJudgeOutput(value) {
 
 function runJudge({ model, jobDir, job, timeoutMs, files }) {
   return new Promise((resolveJudge) => {
-    const scratchRoot = join(tmpdir(), "singular-code-review-eval-judge", `${Date.now()}-${job.input.slug}`)
+    const scratchRoot = join(tmpdir(), "nibble-review-eval-judge", `${Date.now()}-${job.input.slug}`)
     const home = join(scratchRoot, "home")
     const xdgRoot = join(scratchRoot, "xdg")
     const configHome = join(xdgRoot, "config")
