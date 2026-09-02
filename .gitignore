@@ -7,3 +7,4 @@ coverage/
 /tmp/
 /dist/
 /eval/config.local.ts
+*.pem
