@@ -1,6 +1,6 @@
 # Nibble Review
 
-> [!NOTE] This is [@adlrocha](https://github.com/adlrocha)'s fork of [we-are-singular/nibble-review](https://github.com/we-are-singular/nibble-review), fully rebranded to **nibble-review** and parameterized so any GitHub App identity can run it (custom mention command, App client ID, and image via repository variables). To run it on your own repositories, follow [docs/SETUP.md](docs/SETUP.md) or ask the setup skill: `scripts/setup-review-bot.sh --help`.
+> [!NOTE] This is [@adlrocha](https://github.com/adlrocha)'s fork of [we-are-singular/singular-code-review-agent](https://github.com/we-are-singular/singular-code-review-agent), fully rebranded to **nibble-review** and parameterized so any GitHub App identity can run it (custom mention command, App client ID, and image via repository variables). To run it on your own repositories, follow [docs/SETUP.md](docs/SETUP.md) or ask the setup skill: `scripts/setup-review-bot.sh --help`.
 
 Nibble Review is the pull-request reviewer we run on our own repositories at [Singular](https://github.com/we-are-singular). It reads the code around a diff, gives the change to six focused reviewers, audits their findings, and publishes one GitHub review.
 
@@ -245,8 +245,8 @@ The evaluator prepares the exact checkout outside the image, mounts it into the 
 Successful pushes to `main` publish:
 
 ```text
-ghcr.io/we-are-singular/nibble-review:latest
-ghcr.io/we-are-singular/nibble-review:sha-<commit>
+ghcr.io/adlrocha/nibble-review:latest
+ghcr.io/adlrocha/nibble-review:sha-<commit>
 ```
 
 Version tags publish matching image tags. The final pre-[AML](https://agent-markup-language.com/) reviewer is frozen as the manually published `legacy` tag with a matching [.github/workflows/review-legacy.yml](.github/workflows/review-legacy.yml). Normal pushes do not update it. It is a rollback path for Singular's existing deployment and does not receive new review features.

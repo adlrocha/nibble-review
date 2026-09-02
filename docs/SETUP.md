@@ -202,7 +202,7 @@ The reusable workflow pulls the image at the `container:` level. A **public** GH
 Because all identity is config-driven, syncing is just a normal merge/rebase:
 
 ```bash
-git remote add upstream https://github.com/we-are-singular/nibble-review.git
+git remote add upstream https://github.com/we-are-singular/singular-code-review-agent.git
 git fetch upstream
 git merge upstream/main      # or: git rebase upstream/main
 # resolve any conflicts (expected only where upstream touched the small

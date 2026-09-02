@@ -46,7 +46,7 @@ jobs:
     runs-on: "${{ inputs.runner || 'ubuntu-latest' }}"
     container:
       # The pre-AML command surface is coupled to this frozen image.
-      image: ${{ vars.REVIEW_LEGACY_IMAGE || 'ghcr.io/we-are-singular/nibble-review:legacy' }}
+      image: ${{ vars.REVIEW_LEGACY_IMAGE || 'ghcr.io/we-are-singular/singular-code-review-agent:legacy' }}
     env:
       GITHUB_REPOSITORY: ${{ github.repository }}
       PR_NUMBER: ${{ inputs.pr_number }}

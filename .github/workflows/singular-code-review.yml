@@ -31,11 +31,10 @@ jobs:
     concurrency:
       group: nibble-review-${{ github.event.issue.number || github.event.pull_request.number || github.event.inputs.pr_number }}
       cancel-in-progress: true
-    uses: we-are-singular/nibble-review/.github/workflows/review.yml@main
+    uses: adlrocha/nibble-review/.github/workflows/review.yml@main
     with:
       pr_number: ${{ github.event.issue.number || github.event.pull_request.number || github.event.inputs.pr_number }}
       trigger_comment_id: ${{ github.event.comment.id || '' }}
-      runner: nibble-review
     secrets:
       NIBBLE_REVIEW_PRIVATE_KEY: ${{ secrets.NIBBLE_REVIEW_PRIVATE_KEY }}
       OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
