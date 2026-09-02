@@ -8,3 +8,4 @@ coverage/
 /dist/
 /eval/config.local.ts
 *.pem
+*.local.md
