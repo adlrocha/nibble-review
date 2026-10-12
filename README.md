@@ -2,7 +2,7 @@
 
 An AI pull-request reviewer you add to any repository with one workflow file and one secret. It reads the code around a diff, gives the change to six focused reviewers, audits their findings, and publishes one GitHub review.
 
-It runs entirely inside your GitHub Actions job: no GitHub App, no container image, no server. Agents run through [pi](https://pi.dev), so any model pi supports works, and the default ([OpenCode Go](https://opencode.ai/docs/go/) DeepSeek V4 Flash) costs about **$0.10 per full review**.
+It runs entirely inside your GitHub Actions job: no GitHub App, no container image, no server. Agents run through [pi](https://pi.dev), so any model pi supports works, and the default ([OpenCode Go](https://opencode.ai/docs/go/) DeepSeek V4 Flash) measured **$0.12–$0.18 per full review** at pi catalog rates on our first test PRs.
 
 ```yaml
 - uses: adlrocha/nibble-review@v1
