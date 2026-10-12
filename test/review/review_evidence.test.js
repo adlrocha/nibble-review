@@ -2,31 +2,35 @@ import assert from "node:assert/strict"
 import test from "node:test"
 
 import { ReviewEvidence } from "../../dist/services/review-evidence.js"
+import { serializeHistory } from "../../dist/services/github/context-serializer.js"
+import { withEvidenceContext } from "../helpers/evidence.js"
 
 function snapshot(overrides = {}) {
-  return new ReviewEvidence({
-    request: {
-      repository: "owner/repo",
-      prNumber: 42,
-      workspace: "/workspace",
-      workspaceHeadSha: "a".repeat(40),
-      botLogin: "nibble-review[bot]",
-      eventName: null,
-      eventPath: null,
-      actor: "author",
-      ignoreHistory: false
-    },
-    trigger: { eventName: null, reason: "manual", actor: "author", comment: null },
-    pullRequest: { number: 42, author: { login: "author" } },
-    diff: { text: "", files: [], ignoredFiles: [], commentRanges: {} },
-    issueComments: [],
-    reviewComments: [],
-    reviewThreads: [],
-    reviewThreadsAvailable: true,
-    reviews: [],
-    commits: [],
-    ...overrides
-  }).snapshot()
+  return new ReviewEvidence(
+    withEvidenceContext({
+      request: {
+        repository: "owner/repo",
+        prNumber: 42,
+        workspace: "/workspace",
+        workspaceHeadSha: "a".repeat(40),
+        botLogin: "nibble-review[bot]",
+        eventName: null,
+        eventPath: null,
+        actor: "author",
+        ignoreHistory: false
+      },
+      trigger: { eventName: null, reason: "manual", actor: "author", comment: null },
+      pullRequest: { number: 42, author: { login: "author" } },
+      diff: { text: "", files: [], ignoredFiles: [], commentRanges: {} },
+      issueComments: [],
+      reviewComments: [],
+      reviewThreads: [],
+      reviewThreadsAvailable: true,
+      reviews: [],
+      commits: [],
+      ...overrides
+    })
+  ).snapshot()
 }
 
 test("review history is a chronological GraphQL-thread-aware event stream", () => {
@@ -73,11 +77,11 @@ test("review history is a chronological GraphQL-thread-aware event stream", () =
     ]
   })
 
-  assert.deepEqual(result.timeline.entries, [
-    "2026-08-31T10:00:00Z | commit | abcdef1 | @author\n> Fix the contract",
-    "2026-08-31T10:02:00Z | review comment | #20 | @reviewer | resolved | src/example.ts:10-12\n> Please apply: suggestion: const value = true"
+  assert.deepEqual(serializeHistory(result.timeline).entries, [
+    "2026-08-31T10:00:00Z | commit abcdef1 | @author — Fix the contract",
+    "2026-08-31T10:02:00Z | review comment 20 | @reviewer | resolved | src/example.ts:10-12 — Please apply: suggestion: const value = true"
   ])
-  assert.doesNotMatch(result.timeline.entries.join("\n"), /Long commit body/u)
+  assert.doesNotMatch(serializeHistory(result.timeline).entries.join("\n"), /Long commit body/u)
 })
 
 test("participants preserve exact human handles and prefer commit names", () => {
@@ -112,10 +116,10 @@ test("review history compacts long bodies to a bounded single line", () => {
     ]
   })
 
-  const [entry] = result.timeline.entries
-  assert.match(entry, /^2026-08-31T10:00:00Z \| issue comment \| #30 \| @author \| MEMBER\n> Decision:/u)
-  assert.equal(entry.split("\n").length, 2)
-  assert.ok(entry.split("\n")[1].length <= 502)
+  const [entry] = serializeHistory(result.timeline).entries
+  assert.match(entry, /^2026-08-31T10:00:00Z \| issue comment 30 \| @author \| MEMBER — Decision:/u)
+  assert.equal(entry.split("\n").length, 1)
+  assert.ok(entry.split(" — ")[1].length <= 502)
   assert.match(entry, /… \(truncated\)$/u)
 })
 
@@ -140,9 +144,9 @@ test("review history retains substantive review bodies and bodyless decisions", 
     ]
   })
 
-  assert.deepEqual(result.timeline.entries, [
-    "2026-08-31T10:00:00Z | review | #40 | @reviewer | COMMENTED\n> The migration order needs another pass.",
-    "2026-08-31T10:01:00Z | review | #41 | @reviewer | APPROVED"
+  assert.deepEqual(serializeHistory(result.timeline).entries, [
+    "2026-08-31T10:00:00Z | review 40 | @reviewer | COMMENTED — The migration order needs another pass.",
+    "2026-08-31T10:01:00Z | review 41 | @reviewer | APPROVED"
   ])
 })
 
@@ -190,7 +194,7 @@ test("review history includes pull-request lifecycle and scope events", () => {
     ]
   })
 
-  assert.deepEqual(result.timeline.entries, [
+  assert.deepEqual(serializeHistory(result.timeline).entries, [
     "2026-08-31T09:00:00Z | pull request opened | @author | draft",
     "2026-08-31T10:00:00Z | ready for review | @author",
     "2026-08-31T10:01:00Z | labeled | @automation | api",

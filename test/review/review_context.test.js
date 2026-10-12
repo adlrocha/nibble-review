@@ -5,7 +5,12 @@ import { AmlRuntime } from "@aml-jsx/sdk"
 import { jsx } from "@aml-jsx/sdk/jsx-runtime"
 import { DeterministicAgentProvider } from "@aml-jsx/sdk/testing"
 
-import { ReviewContext, ReviewOutcome, ReviewRouting, useReviewContext } from "../../dist/components/review-context.js"
+import {
+  ReviewContext,
+  ReviewOutcome,
+  ReviewRouting,
+  useReviewContext
+} from "../../dist/components/context/review-context.js"
 
 function runtime() {
   return new AmlRuntime({

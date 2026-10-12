@@ -8,7 +8,7 @@ import { Agent, AmlRuntime, localWorkspace, Workspace } from "@aml-jsx/sdk"
 import { jsx } from "@aml-jsx/sdk/jsx-runtime"
 import { DeterministicAgentProvider } from "@aml-jsx/sdk/testing"
 
-import { ReviewContextPrompt } from "../../dist/components/review-context-prompt.js"
+import { ReviewContextPrompt } from "../../dist/components/context/prompt.js"
 
 function materializeContext(t, diff) {
   const workspace = fs.mkdtempSync(path.join(os.tmpdir(), "review-context-prompt-"))
@@ -62,7 +62,6 @@ test("ReviewContextPrompt includes selected materialized files in tagged section
     output,
     /Use the PR description, refs, commits, and changed-file inventory as intent and scope evidence/u
   )
-  assert.match(output, /Do not fetch the same pull-request data again\./u)
   assert.match(output, /Explain the intended change\./u)
   assert.match(output, /src\/example\.ts/u)
   assert.match(output, /<pull-request-diff>/u)
@@ -70,7 +69,7 @@ test("ReviewContextPrompt includes selected materialized files in tagged section
   assert.match(output, /one two\nthree/u)
   assert.match(output, /<pull-request-history>/u)
   assert.match(output, /### File: `\.nibble-review\/history\.md` — pull-request history/u)
-  assert.doesNotMatch(output, /exceeding the 32768-byte inline limit/u)
+  assert.doesNotMatch(output, /inline limit/u)
 })
 
 test("ReviewContextPrompt reads each materialized file live for every evaluation", async t => {
@@ -91,7 +90,7 @@ test("ReviewContextPrompt keeps an empty materialized file inline", async t => {
 
   assert.match(output, /<pull-request-diff>/u)
   assert.match(output, /### File: `\.nibble-review\/pr\.diff` — pull-request diff/u)
-  assert.doesNotMatch(output, /exceeding the 32768-byte inline limit/u)
+  assert.doesNotMatch(output, /inline limit/u)
   assert.doesNotMatch(output, /\(Empty\.\)/u)
 })
 
@@ -105,11 +104,9 @@ test("ReviewContextPrompt gives its Agent a readable path for oversized material
     stagedContent = fs.readFileSync(stagedPath, "utf8")
   })
 
-  assert.match(
-    output,
-    new RegExp(`The file is ${Buffer.byteLength(largeDiff)} bytes, exceeding the 32768-byte inline limit`, "u")
-  )
-  assert.match(output, /read it completely before staging findings/u)
+  assert.match(output, /File: `\.nibble-review\/pr\.diff` \([\d.]+ KiB, 4001 lines\)/u)
+  assert.match(output, /The file exceeds the [\d.]+ KiB inline limit\. Read it at `/u)
+  assert.match(output, /Review before staging findings\./u)
   assert.doesNotMatch(output, /private-tail-marker/u)
   assert.match(stagedContent, /private-tail-marker$/u)
   assert.match(output, /changed-file inventory/u)

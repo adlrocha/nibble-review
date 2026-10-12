@@ -2,6 +2,7 @@ import assert from "node:assert/strict"
 import test from "node:test"
 
 import { ReviewEvidence } from "../../dist/services/review-evidence.js"
+import { withEvidenceContext } from "../helpers/evidence.js"
 
 const botLogin = "nibble-review[bot]"
 
@@ -39,29 +40,31 @@ function botReview(submittedAt) {
 }
 
 function actionItems(overrides = {}) {
-  return new ReviewEvidence({
-    request: {
-      repository: "owner/repo",
-      prNumber: 42,
-      workspace: "/workspace",
-      workspaceHeadSha: "a".repeat(40),
-      botLogin,
-      eventName: null,
-      eventPath: null,
-      actor: "octocat",
-      ignoreHistory: false
-    },
-    trigger: overrides.trigger || trigger(),
-    pullRequest: { number: 42, author: { login: "octocat" } },
-    diff: { text: "", files: [], ignoredFiles: [], commentRanges: {} },
-    issueComments: [],
-    reviewComments: [],
-    reviewThreads: [],
-    reviewThreadsAvailable: true,
-    reviews: [],
-    commits: [],
-    ...overrides
-  }).snapshot().actionItems
+  return new ReviewEvidence(
+    withEvidenceContext({
+      request: {
+        repository: "owner/repo",
+        prNumber: 42,
+        workspace: "/workspace",
+        workspaceHeadSha: "a".repeat(40),
+        botLogin,
+        eventName: null,
+        eventPath: null,
+        actor: "octocat",
+        ignoreHistory: false
+      },
+      trigger: overrides.trigger || trigger(),
+      pullRequest: { number: 42, author: { login: "octocat" } },
+      diff: { text: "", files: [], ignoredFiles: [], commentRanges: {} },
+      issueComments: [],
+      reviewComments: [],
+      reviewThreads: [],
+      reviewThreadsAvailable: true,
+      reviews: [],
+      commits: [],
+      ...overrides
+    })
+  ).snapshot().actionItems
 }
 
 test("push-triggered runs ignore mention comments already followed by a bot review", () => {

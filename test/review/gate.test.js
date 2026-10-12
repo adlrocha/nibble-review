@@ -71,7 +71,19 @@ function reviewSnapshot(options, rawDiff = "diff") {
     },
     diff: {
       text: diff.text,
-      files: diff.files.length > 0 ? diff.files.map(file => file.path) : ["src/app.js"],
+      files:
+        diff.files.length > 0
+          ? diff.files
+          : [
+              {
+                path: "src/app.js",
+                status: "modified",
+                addedLines: [],
+                deletedLines: [],
+                rightLines: [],
+                leftLines: []
+              }
+            ],
       ignoredFiles: diff.ignoredFiles,
       commentRanges: diff.commentRanges
     },

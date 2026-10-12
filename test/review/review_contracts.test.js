@@ -4,10 +4,12 @@ import path from "node:path"
 import test from "node:test"
 import { fileURLToPath } from "node:url"
 
-import { applyReviewBanner, buildReviewPayload, enforceReviewBodyLimit } from "../../dist/lib/review-body.js"
+import { applyReviewBanner, enforceReviewBodyLimit } from "../../dist/lib/render/review-body.js"
+import { serializeReviewPayload as buildReviewPayload } from "../../dist/services/github/review-serializer.js"
 import { ReviewDiff } from "../../dist/lib/review-diff.js"
 import { ReviewQueue, ReviewSeveritySchema } from "../../dist/lib/review-queue.js"
 import { ReviewEvidence } from "../../dist/services/review-evidence.js"
+import { withEvidenceContext } from "../helpers/evidence.js"
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..")
 const fixture = path.join(repoRoot, "test", "fixtures", "sample.patch")
@@ -75,10 +77,8 @@ test("audit demotion follows the inline severity ladder and preserves category b
   )
   const blocker = queue.add("standards-architecture", {
     kind: "blocker",
-    severity: "critical",
     body: "The approach cannot safely land.",
-    evidence: "No changed line can honestly anchor the repository-wide conflict.",
-    confidence: "high"
+    evidence: "No changed line can honestly anchor the repository-wide conflict."
   })
   queue.beginAudit()
 
@@ -311,32 +311,34 @@ test("review payload maps the finalized queue to GitHub review shape", () => {
 })
 
 test("evidence participants exclude bot logins with or without the bot suffix", () => {
-  const snapshot = new ReviewEvidence({
-    request: {
-      repository: "owner/repo",
-      prNumber: 42,
-      workspace: "/workspace",
-      workspaceHeadSha: "a".repeat(40),
-      botLogin: "nibble-review[bot]",
-      eventName: null,
-      eventPath: null,
-      actor: null,
-      ignoreHistory: false
-    },
-    trigger: { eventName: null, reason: "manual", actor: null, comment: null },
-    pullRequest: { number: 42 },
-    diff: { text: "", files: [], ignoredFiles: [], commentRanges: {} },
-    issueComments: [
-      { id: 1, user: { login: "nibble-review" }, body: "Bot-authored review note." },
-      { id: 2, user: { login: "linear-code[bot]" }, body: "SHE-170" },
-      { id: 3, user: { login: "fthemudo" }, body: "Thanks for the review." }
-    ],
-    reviewComments: [],
-    reviewThreadsAvailable: false,
-    reviewThreads: [],
-    reviews: [],
-    commits: []
-  }).snapshot()
+  const snapshot = new ReviewEvidence(
+    withEvidenceContext({
+      request: {
+        repository: "owner/repo",
+        prNumber: 42,
+        workspace: "/workspace",
+        workspaceHeadSha: "a".repeat(40),
+        botLogin: "nibble-review[bot]",
+        eventName: null,
+        eventPath: null,
+        actor: null,
+        ignoreHistory: false
+      },
+      trigger: { eventName: null, reason: "manual", actor: null, comment: null },
+      pullRequest: { number: 42 },
+      diff: { text: "", files: [], ignoredFiles: [], commentRanges: {} },
+      issueComments: [
+        { id: 1, user: { login: "nibble-review" }, body: "Bot-authored review note." },
+        { id: 2, user: { login: "linear-code[bot]" }, body: "SHE-170" },
+        { id: 3, user: { login: "fthemudo" }, body: "Thanks for the review." }
+      ],
+      reviewComments: [],
+      reviewThreadsAvailable: false,
+      reviewThreads: [],
+      reviews: [],
+      commits: []
+    })
+  ).snapshot()
 
   assert.deepEqual(snapshot.participants, ["<@fthemudo>"])
 })
