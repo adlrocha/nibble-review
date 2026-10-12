@@ -1,19 +1,13 @@
 # Nibble Review — Integration Runbook
 
-Personal ops checklist for wiring `adlrocha/nibble-review` up. Tracked in the
-repo so it survives sandbox teardowns. **Never** paste the `.pem` contents or
-API keys into this file.
+Personal ops checklist for wiring `adlrocha/nibble-review` up. Tracked in the repo so it survives sandbox teardowns. **Never** paste the `.pem` contents or API keys into this file.
 
-> **Before killing the sandbox:** the App private key
-> (`nibble-review.2026-09-02.private-key.pem`) currently exists ONLY inside the
-> pi sandbox checkout. Copy it to the host first, or regenerate it later from
-> the App page (General → Private keys → Generate a private key) and re-set the
-> `NIBBLE_REVIEW_PRIVATE_KEY` secret everywhere.
+> **Before killing the sandbox:** the App private key (`nibble-review.2026-09-02.private-key.pem`) currently exists ONLY inside the pi sandbox checkout. Copy it to the host first, or regenerate it later from the App page (General → Private keys → Generate a private key) and re-set the `NIBBLE_REVIEW_PRIVATE_KEY` secret everywhere.
 
 ## Current status snapshot (2026-09-02)
 
 | # | Item | Status |
-|---|------|--------|
+| --- | --- | --- |
 | 1 | `origin/main` up to date (`15a04b7`+) | ✅ verified |
 | 2 | Image `ghcr.io/adlrocha/nibble-review:latest` live, package public | ✅ verified |
 | 3 | `.pem` valid RSA key, gitignored (`*.pem`), never committed | ✅ verified |
@@ -30,8 +24,7 @@ API keys into this file.
 
 ### A. Get the real Client ID
 
-https://github.com/settings/apps → your app → General → **Client ID** (`Iv…`).
-While there, verify rows 5–6 (permissions, events, webhook **Active unchecked**).
+https://github.com/settings/apps → your app → General → **Client ID** (`Iv…`). While there, verify rows 5–6 (permissions, events, webhook **Active unchecked**).
 
 ### B. Verify the App pair + installation (no secrets printed)
 
@@ -39,15 +32,11 @@ While there, verify rows 5–6 (permissions, events, webhook **Active unchecked*
 node scripts/verify-app.mjs <REAL_CLIENT_ID> ./nibble-review.2026-09-02.private-key.pem
 ```
 
-Prints: app name/slug, permissions, events, installations + repo lists.
-If `AUTH FAILED (401)` → client ID still wrong, or the `.pem` belongs to a
-different app (regenerate the key from the correct app's page).
+Prints: app name/slug, permissions, events, installations + repo lists. If `AUTH FAILED (401)` → client ID still wrong, or the `.pem` belongs to a different app (regenerate the key from the correct app's page).
 
 ### C. Fix the client ID default in `review.yml`
 
-`.github/workflows/review.yml` line ~86 has the wrong default
-`Iv23liVgvy1yaHapd0Wx`. Replace with the real one and commit
-(`fix: correct default review app client id`). Push via SSH (see below).
+`.github/workflows/review.yml` line ~86 has the wrong default `Iv23liVgvy1yaHapd0Wx`. Replace with the real one and commit (`fix: correct default review app client id`). Push via SSH (see below).
 
 ### D. Set secrets + vars on the fork
 
@@ -69,8 +58,7 @@ scripts/setup-review-bot.sh check --repo adlrocha/nibble-review   # all green
 
 ### F. Smoke test
 
-Open a non-draft, same-repo PR on the fork, or comment `@nibble-review` on one.
-Manual trigger: Actions → "Nibble Review" → Run workflow → PR number.
+Open a non-draft, same-repo PR on the fork, or comment `@nibble-review` on one. Manual trigger: Actions → "Nibble Review" → Run workflow → PR number.
 
 ### G. Consumer repos (after the fork works end-to-end)
 
@@ -86,8 +74,7 @@ scripts/setup-review-bot.sh check --repo adlrocha/REPO
 
 ## Pushing from a fresh sandbox (SSH recipe)
 
-The OAuth `gh` token lacks the `workflow` scope → HTTPS pushes touching
-`.github/workflows/*` are rejected. SSH pushes are not scope-limited:
+The OAuth `gh` token lacks the `workflow` scope → HTTPS pushes touching `.github/workflows/*` are rejected. SSH pushes are not scope-limited:
 
 ```bash
 ssh-keygen -t ed25519 -f ~/.ssh/pi-temp -N "" -C pi-temp -q
@@ -97,11 +84,9 @@ gh api user/keys/<id-from-above> -X DELETE && rm -f ~/.ssh/pi-temp{,.pub}
 ```
 
 Gotchas learned:
-- `--force-with-lease` with an **explicit URL** fails with "stale info" (no
-  tracking ref to compare). Push via configured `origin`, or use
-  `--force-with-lease=refs/heads/main:<expected-sha>`.
-- If the sandbox has no SSH remote: fetch/push via explicit HTTPS URL works
-  for reads: `git fetch https://github.com/adlrocha/nibble-review.git +main:refs/remotes/origin/main`.
+
+- `--force-with-lease` with an **explicit URL** fails with "stale info" (no tracking ref to compare). Push via configured `origin`, or use `--force-with-lease=refs/heads/main:<expected-sha>`.
+- If the sandbox has no SSH remote: fetch/push via explicit HTTPS URL works for reads: `git fetch https://github.com/adlrocha/nibble-review.git +main:refs/remotes/origin/main`.
 
 ## Repo layout notes
 

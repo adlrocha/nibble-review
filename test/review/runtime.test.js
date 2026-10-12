@@ -477,7 +477,7 @@ test("GitHub client binds a review request to the inspected commit", async t => 
   assert.equal(request?.url, "https://api.github.com/repos/owner/repository/pulls/42/reviews")
   assert.deepEqual(JSON.parse(String(request?.init?.body)), {
     commit_id: "2222222222222222222222222222222222222222",
-    body: "Prepared review",
+    body: "Prepared review\n\n<!-- nibble-review -->",
     event: "COMMENT",
     comments: []
   })
