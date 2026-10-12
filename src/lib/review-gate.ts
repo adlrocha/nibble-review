@@ -2,6 +2,7 @@ import { spawnSync } from "node:child_process"
 
 import { compactContextText } from "../services/github/context-model.js"
 import type { ReviewSnapshot } from "../types/review.js"
+import { reviewAuthorship } from "./review-authorship.js"
 import { ReviewDiff } from "./review-diff.js"
 
 export type GateDecision =
@@ -284,7 +285,8 @@ function requestsFullReview(snapshot: ReviewSnapshot): boolean {
 function latestBotReview(snapshot: ReviewSnapshot): PreviousBotReview | null {
   const review = snapshot.reviews
     .filter(
-      candidate => candidate.user?.login === snapshot.botLogin && Boolean(candidate.commit_id || candidate.commitId)
+      candidate =>
+        reviewAuthorship(snapshot.botLogin).isOwn(candidate) && Boolean(candidate.commit_id || candidate.commitId)
     )
     .at(-1)
   const commitId = review?.commit_id || review?.commitId

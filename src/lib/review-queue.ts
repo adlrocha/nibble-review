@@ -2,6 +2,7 @@ import { isAbsolute } from "node:path"
 import { z } from "zod"
 
 import type { ReviewComment, ReviewThread } from "../services/github/client.js"
+import { reviewAuthorship } from "./review-authorship.js"
 import type { ValidCommentRanges } from "./review-diff.js"
 
 /** Canonical lane names and their short, model-facing finding ID prefixes. */
@@ -490,7 +491,12 @@ export class ReviewQueue {
 
     // REST has no resolution state, so suppress only exact top-level bot matches.
     for (const posted of this.#options.reviewComments) {
-      if (posted.user?.login !== this.#options.botLogin || posted.in_reply_to_id || !posted.path || !posted.line) {
+      if (
+        !reviewAuthorship(this.#options.botLogin).isOwn(posted) ||
+        posted.in_reply_to_id ||
+        !posted.path ||
+        !posted.line
+      ) {
         continue
       }
       let comment: ReviewInlineComment

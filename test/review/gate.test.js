@@ -5,6 +5,7 @@ import os from "node:os"
 import path from "node:path"
 import test from "node:test"
 
+import { REVIEW_MARKER } from "../../dist/lib/review-authorship.js"
 import { prepareGate } from "../../dist/lib/review-gate.js"
 import { ReviewDiff } from "../../dist/lib/review-diff.js"
 
@@ -144,6 +145,22 @@ test("synchronize on the already reviewed head posts no-review without OpenCode"
 
   assert.equal(result.action, "post")
   assert.equal(result.decision.decision, "no-review")
+})
+
+test("a shared github-actions login only counts as a previous review when it carries the marker", () => {
+  const { repo, base, reviewed } = createRepo()
+  const sharedLogin = "github-actions[bot]"
+  const foreign = { ...botReview(reviewed), user: { login: sharedLogin }, body: "Lint passed." }
+  const own = { ...foreign, id: 2, body: `Previous review.\n\n${REVIEW_MARKER}` }
+
+  const withForeign = {
+    ...reviewSnapshot({ reason: "synchronize", base, head: reviewed, reviews: [foreign] }),
+    botLogin: sharedLogin
+  }
+  assert.deepEqual(prepareGate(withForeign, repo), { action: "review", reason: "no previous bot review" })
+
+  const withOwn = { ...withForeign, reviews: [foreign, own] }
+  assert.equal(prepareGate(withOwn, repo).decision.decision, "no-review")
 })
 
 test("synchronize after an ancestor commit sends the commit delta to the gate", () => {

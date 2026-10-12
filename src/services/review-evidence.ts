@@ -11,6 +11,7 @@ import type {
 } from "./github/client.js"
 import type { ReviewActionItem, ReviewRequest, ReviewSnapshot, ReviewTrigger } from "../types/review.js"
 import type { DiffFile, ValidCommentRanges } from "../lib/review-diff.js"
+import { reviewAuthorship, type ReviewAuthorship } from "../lib/review-authorship.js"
 import { compactContextText, type CompactPullRequestContext } from "./github/context-model.js"
 
 export const REVIEW_COMMAND = "@nibble-review"
@@ -55,9 +56,11 @@ type ReviewEvidenceInput = {
  */
 export class ReviewEvidence {
   readonly #input: ReviewEvidenceInput
+  readonly #authorship: ReviewAuthorship
 
   constructor(input: ReviewEvidenceInput) {
     this.#input = input
+    this.#authorship = reviewAuthorship(input.request.botLogin)
   }
 
   /** Reads the GitHub Actions event once and reduces it to review routing data. */
@@ -101,9 +104,7 @@ export class ReviewEvidence {
   /** Adds routing and publication derivatives to the service-owned context DTO. */
   snapshot(): ReviewSnapshot {
     const unresolvedReviewThreads = this.#input.reviewThreads.filter(thread => !thread.is_resolved)
-    const unresolvedBotThreads = unresolvedReviewThreads.filter(
-      thread => thread.top_level_author === this.#input.request.botLogin
-    )
+    const unresolvedBotThreads = unresolvedReviewThreads.filter(thread => this.#ownThreadStart(thread))
     const actionItems = this.#actionItems()
 
     return Object.freeze({
@@ -125,7 +126,7 @@ export class ReviewEvidence {
       context: this.#input.context,
       timeline: this.#input.context.history,
       previousBotFindings: this.#input.reviewComments.filter(
-        comment => comment.user?.login === this.#input.request.botLogin && !comment.in_reply_to_id
+        comment => this.#authorship.isOwn(comment) && !comment.in_reply_to_id
       ),
       actionItems,
       participants: this.#participants(actionItems)
@@ -136,7 +137,6 @@ export class ReviewEvidence {
   #actionItems(): ReviewActionItem[] {
     const items: ReviewActionItem[] = []
     const trigger = this.#input.trigger
-    const botLogin = this.#input.request.botLogin
 
     if (trigger.comment) {
       items.push({
@@ -153,7 +153,7 @@ export class ReviewEvidence {
       const createdAt = comment.created_at || comment.updated_at || null
       if (
         comment.id === trigger.comment?.id ||
-        comment.user?.login === botLogin ||
+        this.#authorship.isOwn(comment) ||
         !this.#mentionsReviewer(comment.body) ||
         (latestBotActivity !== null && createdAt && Date.parse(createdAt) <= latestBotActivity)
       ) {
@@ -174,8 +174,8 @@ export class ReviewEvidence {
       for (const thread of this.#input.reviewThreads) {
         if (
           thread.is_resolved ||
-          thread.top_level_author !== botLogin ||
-          thread.latest_author === botLogin ||
+          !this.#ownThreadStart(thread) ||
+          this.#authorship.isOwn(thread.comments.find(comment => comment.id === thread.latest_comment_id)) ||
           !thread.top_level_comment_id
         ) {
           continue
@@ -205,13 +205,13 @@ export class ReviewEvidence {
     }
     for (const [parent, comments] of commentsByParent) {
       const topLevel = comments.find(comment => comment.id === parent)
-      if (topLevel?.user?.login !== botLogin) {
+      if (!this.#authorship.isOwn(topLevel)) {
         continue
       }
       const latest = comments.toSorted(
         (left, right) => Date.parse(left.created_at || "1970-01-01") - Date.parse(right.created_at || "1970-01-01")
       )[comments.length - 1]
-      if (latest?.user?.login && latest.user.login !== botLogin) {
+      if (latest?.user?.login && !this.#authorship.isOwn(latest)) {
         items.push({
           id: `review-comment:${parent}`,
           kind: "reply_requested",
@@ -223,6 +223,11 @@ export class ReviewEvidence {
       }
     }
     return items
+  }
+
+  /** True when this reviewer opened the thread, judged by its top-level comment. */
+  #ownThreadStart(thread: ReviewThread): boolean {
+    return this.#authorship.isOwn(thread.comments.find(comment => comment.id === thread.top_level_comment_id))
   }
 
   #command(): string {
@@ -238,12 +243,12 @@ export class ReviewEvidence {
   #latestBotActivity(): number | null {
     const timestamps: number[] = []
     for (const comment of this.#input.issueComments) {
-      if (comment.user?.login === this.#input.request.botLogin) {
+      if (this.#authorship.isOwn(comment)) {
         timestamps.push(Date.parse(comment.created_at || comment.updated_at || ""))
       }
     }
     for (const review of this.#input.reviews) {
-      if (review.user?.login === this.#input.request.botLogin) {
+      if (this.#authorship.isOwn(review)) {
         timestamps.push(Date.parse(review.submitted_at || review.submittedAt || ""))
       }
     }

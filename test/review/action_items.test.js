@@ -130,3 +130,29 @@ test("direct trigger comments are represented once as trigger requests", () => {
     }
   ])
 })
+
+test("another workflow's github-actions comment does not count as reviewer activity", () => {
+  const shared = "github-actions[bot]"
+  const items = actionItems({
+    request: {
+      repository: "owner/repo",
+      prNumber: 42,
+      workspace: "/workspace",
+      workspaceHeadSha: "a".repeat(40),
+      botLogin: shared,
+      eventName: null,
+      eventPath: null,
+      actor: "octocat",
+      ignoreHistory: false
+    },
+    issueComments: [
+      issueComment(10, "@nibble-review can you try again?", "2026-06-17T00:25:00Z"),
+      issueComment(11, "Coverage report: 91%", "2026-06-17T00:31:00Z", shared)
+    ]
+  })
+
+  assert.deepEqual(
+    items.map(item => item.commentId),
+    [10]
+  )
+})

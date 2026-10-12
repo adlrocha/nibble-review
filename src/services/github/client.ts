@@ -1,4 +1,6 @@
 import { Octokit } from "@octokit/rest"
+import { withReviewMarker } from "../../lib/review-authorship.js"
+import { redactSecrets, secretValues } from "../../lib/secret-redaction.js"
 import type { ReviewPayload } from "./review-serializer.js"
 
 export type GitHubUser = {
@@ -455,11 +457,19 @@ function normalizeReviewThread(node: GraphQLThreadNode): ReviewThread {
  * Creates the live Octokit-backed client used for all runner-owned GitHub API
  * reads and writes.
  */
-export function createGitHubClient(options: { token: string; repository: string }): GitHubClient {
+export function createGitHubClient(options: {
+  token: string
+  repository: string
+  /** Values stripped from every published body; defaults to secret-looking environment values. */
+  secrets?: readonly string[]
+}): GitHubClient {
   const octokit = new Octokit({
     auth: options.token,
     userAgent: "nibble-review"
   })
+  const secrets = options.secrets ?? secretValues(process.env)
+  /** Every body leaves through here: secrets redacted, reviewer marker attached. */
+  const publishable = (body: string) => withReviewMarker(redactSecrets(body, secrets))
 
   // Issue and PR numbers share a namespace. Query the union first because
   // GitHub throws a GraphQL response error for an issue-only read of a PR.
@@ -767,7 +777,7 @@ query($owner: String!, $name: String!, $number: Int!, $cursor: String) {
         owner,
         repo,
         issue_number: prNumber,
-        body
+        body: publishable(body)
       })
     },
 
@@ -778,9 +788,9 @@ query($owner: String!, $name: String!, $number: Int!, $cursor: String) {
         repo,
         pull_number: prNumber,
         commit_id: headSha,
-        body: payload.body,
+        body: publishable(payload.body),
         event: payload.event,
-        comments: payload.comments
+        comments: payload.comments.map(comment => ({ ...comment, body: publishable(comment.body) }))
       })
     },
 
@@ -791,7 +801,7 @@ query($owner: String!, $name: String!, $number: Int!, $cursor: String) {
         repo,
         pull_number: prNumber,
         comment_id: commentId,
-        body
+        body: publishable(body)
       })
     }
   }
