@@ -4,20 +4,20 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import test from "node:test"
 
-import { evalJobKey } from "../eval/lib/job-key.mjs"
-import { JudgeAttemptStore } from "../eval/lib/judge-attempts.mjs"
-import { normalizeEvalModel } from "../eval/lib/models.mjs"
-import { reviewCacheKey } from "../eval/lib/review-cache-key.mjs"
-import { reviewerContainerConfig } from "../eval/lib/reviewer-runner.mjs"
+import { evalJobKey } from "../../eval/lib/job-key.mjs"
+import { JudgeAttemptStore } from "../../eval/lib/judge-attempts.mjs"
+import { normalizeEvalModel } from "../../eval/lib/models.mjs"
+import { reviewCacheKey } from "../../eval/lib/review-cache-key.mjs"
+import { reviewerContainerConfig } from "../../eval/lib/reviewer-runner.mjs"
 import {
   isOrphanedEvalContainer,
   runProcess,
   sameCaptureJob,
   validateAppendImageIdentity,
   writeRunFile
-} from "../eval/run.mjs"
-import { completedJobArtifacts } from "../eval/lib/job-artifacts.mjs"
-import { resolveJudgeConfigFile } from "../eval/judge.mjs"
+} from "../../eval/run.mjs"
+import { completedJobArtifacts } from "../../eval/lib/job-artifacts.mjs"
+import { resolveJudgeConfigFile } from "../../eval/judge.mjs"
 
 const input = {
   slug: "owner-repository-pr-42",

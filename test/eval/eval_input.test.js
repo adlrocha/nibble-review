@@ -4,9 +4,9 @@ import path from "node:path"
 import test from "node:test"
 import { fileURLToPath } from "node:url"
 
-import { normalizeEvalInput } from "../eval/lib/pr-input.mjs"
+import { normalizeEvalInput } from "../../eval/lib/pr-input.mjs"
 
-const repoRoot = path.dirname(path.dirname(fileURLToPath(import.meta.url)))
+const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..")
 
 test("eval inputs accept public history-blind pull requests", () => {
   assert.deepEqual(normalizeEvalInput({ pr: "trpc/trpc/7262", ignoreHistory: true }), {

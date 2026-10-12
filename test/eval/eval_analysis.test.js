@@ -6,11 +6,11 @@ import path from "node:path"
 import test from "node:test"
 import { fileURLToPath } from "node:url"
 
-import { buildEvalSummary, evalRunStatus } from "../eval/lib/analysis.mjs"
-import { buildJudgePrompt } from "../eval/lib/judge-prompt.mjs"
-import { evalJobKey } from "../eval/lib/job-key.mjs"
+import { buildEvalSummary, evalRunStatus } from "../../eval/lib/analysis.mjs"
+import { buildJudgePrompt } from "../../eval/lib/judge-prompt.mjs"
+import { evalJobKey } from "../../eval/lib/job-key.mjs"
 
-const repoRoot = path.dirname(path.dirname(fileURLToPath(import.meta.url)))
+const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..")
 
 test("judge prompt separates review quality from the pull-request verdict", () => {
   const prompt = buildJudgePrompt({

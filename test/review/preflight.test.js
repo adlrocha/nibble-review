@@ -1,7 +1,7 @@
 import assert from "node:assert/strict"
 import test from "node:test"
 
-import { ReviewPreflight } from "../dist/services/review-preflight.js"
+import { ReviewPreflight } from "../../dist/services/review-preflight.js"
 
 function evaluateGuard({ triggerCommentId, ...options }) {
   return new ReviewPreflight(options).evaluate(triggerCommentId)

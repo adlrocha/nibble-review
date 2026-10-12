@@ -8,7 +8,7 @@ import { Agent, AmlRuntime, localWorkspace, Workspace } from "@aml-jsx/sdk"
 import { jsx } from "@aml-jsx/sdk/jsx-runtime"
 import { DeterministicAgentProvider } from "@aml-jsx/sdk/testing"
 
-import { ReviewContextPrompt } from "../dist/components/review-context-prompt.js"
+import { ReviewContextPrompt } from "../../dist/components/review-context-prompt.js"
 
 function materializeContext(t, diff) {
   const workspace = fs.mkdtempSync(path.join(os.tmpdir(), "review-context-prompt-"))

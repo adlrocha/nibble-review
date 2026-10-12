@@ -1,7 +1,7 @@
 import assert from "node:assert/strict"
 import test from "node:test"
 
-import { ReviewEvidence } from "../dist/services/review-evidence.js"
+import { ReviewEvidence } from "../../dist/services/review-evidence.js"
 
 function snapshot(overrides = {}) {
   return new ReviewEvidence({

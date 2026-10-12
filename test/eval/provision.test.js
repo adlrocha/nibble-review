@@ -6,7 +6,7 @@ import path from "node:path"
 import test from "node:test"
 import { fileURLToPath } from "node:url"
 
-const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..")
+const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..")
 const provision = path.join(repoRoot, "bin", "provision.sh")
 
 function makeExecutable(file, body) {

@@ -6,7 +6,7 @@ import path from "node:path"
 import test from "node:test"
 import { fileURLToPath } from "node:url"
 
-const repoRoot = path.dirname(path.dirname(fileURLToPath(import.meta.url)))
+const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..")
 const benchmark = path.join(repoRoot, "eval", "benchmark.mjs")
 
 function writeSummary(root, name, score, runner = "aml", provider = "opencode", options = {}) {

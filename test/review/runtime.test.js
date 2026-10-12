@@ -7,12 +7,12 @@ import test from "node:test"
 
 import { DeterministicAgentProvider } from "@aml-jsx/sdk/testing"
 
-import { createReviewProvider } from "../dist/lib/review-provider.js"
-import { reviewExitCode } from "../dist/cli/review.js"
-import { ReviewUnavailableError, runReview } from "../dist/run-review.js"
-import { ReviewGitHubActions } from "../dist/services/github-actions.js"
-import { createGitHubClient } from "../dist/services/github-client.js"
-import { createGitHubWriteTools } from "../dist/tools/github-write.js"
+import { createReviewProvider } from "../../dist/lib/review-provider.js"
+import { reviewExitCode } from "../../dist/cli/review.js"
+import { ReviewUnavailableError, runReview } from "../../dist/run-review.js"
+import { ReviewGitHubActions } from "../../dist/services/github-actions.js"
+import { createGitHubClient } from "../../dist/services/github-client.js"
+import { createGitHubWriteTools } from "../../dist/tools/github-write.js"
 
 const lanes = [
   "intent-contract",

@@ -4,7 +4,7 @@ import os from "node:os"
 import path from "node:path"
 import test from "node:test"
 
-import { preparePullRequestWorkspace } from "../eval/lib/github.mjs"
+import { preparePullRequestWorkspace } from "../../eval/lib/github.mjs"
 
 const HEAD = "2222222222222222222222222222222222222222"
 

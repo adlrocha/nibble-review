@@ -5,8 +5,8 @@ import os from "node:os"
 import path from "node:path"
 import test from "node:test"
 
-import { prepareGate } from "../dist/lib/review-gate.js"
-import { ReviewDiff } from "../dist/lib/review-diff.js"
+import { prepareGate } from "../../dist/lib/review-gate.js"
+import { ReviewDiff } from "../../dist/lib/review-diff.js"
 
 const botLogin = "nibble-review[bot]"
 

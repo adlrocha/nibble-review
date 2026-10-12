@@ -4,7 +4,7 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import test from "node:test"
 
-import { stageOpenCodeAuth } from "../eval/lib/opencode-auth.mjs"
+import { stageOpenCodeAuth } from "../../eval/lib/opencode-auth.mjs"
 
 test("stages isolated OpenCode auth when no API key is configured", () => {
   const scratch = mkdtempSync(join(tmpdir(), "nibble-opencode-auth-"))

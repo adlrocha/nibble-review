@@ -4,12 +4,12 @@ import path from "node:path"
 import test from "node:test"
 import { fileURLToPath } from "node:url"
 
-import { applyReviewBanner, buildReviewPayload, enforceReviewBodyLimit } from "../dist/lib/review-body.js"
-import { ReviewDiff } from "../dist/lib/review-diff.js"
-import { ReviewQueue, ReviewSeveritySchema } from "../dist/lib/review-queue.js"
-import { ReviewEvidence } from "../dist/services/review-evidence.js"
+import { applyReviewBanner, buildReviewPayload, enforceReviewBodyLimit } from "../../dist/lib/review-body.js"
+import { ReviewDiff } from "../../dist/lib/review-diff.js"
+import { ReviewQueue, ReviewSeveritySchema } from "../../dist/lib/review-queue.js"
+import { ReviewEvidence } from "../../dist/services/review-evidence.js"
 
-const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..")
+const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..")
 const fixture = path.join(repoRoot, "test", "fixtures", "sample.patch")
 
 function queueOptions(diffText, overrides = {}) {

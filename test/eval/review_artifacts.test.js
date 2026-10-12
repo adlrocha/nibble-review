@@ -4,7 +4,7 @@ import os from "node:os"
 import path from "node:path"
 import test from "node:test"
 
-import { writeReviewArtifacts } from "../eval/lib/review-artifacts.mjs"
+import { writeReviewArtifacts } from "../../eval/lib/review-artifacts.mjs"
 
 function result() {
   return {
