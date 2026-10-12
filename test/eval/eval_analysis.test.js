@@ -109,7 +109,8 @@ test("eval analysis reads AML turns and token totals from the canonical stats ex
     reasoningTokens: 40,
     cacheReadTokens: 0,
     cacheWriteTokens: 0,
-    costUsd: 0
+    costUsd: null,
+    estimatedCostUsd: null
   })
   assert.equal(summary.results[0].durationMs, 420_000)
   assert.equal(summary.results[0].reviewerDurationMs, 420_000)
@@ -268,4 +269,47 @@ test("eval report requires an explicit diagnostic flag for partial runs", t => {
   })
   assert.equal(allowed.status, 0, allowed.stderr)
   assert.equal(JSON.parse(fs.readFileSync(path.join(runDir, "summary.json"), "utf8")).run.status, "running")
+})
+
+test("eval analysis uses pi's session-log cost estimate as the capture cost", t => {
+  const runDir = fs.mkdtempSync(path.join(os.tmpdir(), "aml-analysis-"))
+  t.after(() => fs.rmSync(runDir, { recursive: true, force: true }))
+  const reviewFile = path.join(runDir, "review.md")
+  const statsFile = path.join(runDir, "review_stats.json")
+  fs.writeFileSync(reviewFile, "# Final Review Body\n\n✅ LGTM")
+  fs.writeFileSync(
+    statsFile,
+    JSON.stringify({
+      usageSource: "pi-session",
+      totals: {
+        durationMs: 1_000,
+        turns: 8,
+        totalTokens: 3_000,
+        inputTokens: 2_000,
+        outputTokens: 1_000,
+        estimatedCostUsd: 0.12
+      }
+    })
+  )
+  const job = {
+    runner: "aml",
+    provider: "pi",
+    model: "opencode-go/deepseek-v4-flash",
+    status: "completed",
+    error: null,
+    outputBytes: fs.statSync(reviewFile).size,
+    startedAt: "2026-10-12T10:00:00.000Z",
+    endedAt: "2026-10-12T10:01:00.000Z",
+    input: { slug: "owner-repository-pr-7", ref: "owner/repository#7", label: "pi" },
+    files: { review: reviewFile, stats: statsFile }
+  }
+  const summary = buildEvalSummary({
+    runDir,
+    run: { status: "completed", runner: "aml", provider: "pi", jobs: [job] },
+    judgments: []
+  })
+
+  assert.equal(summary.results[0].provider, "pi")
+  assert.equal(summary.results[0].captureUsage.estimatedCostUsd, 0.12)
+  assert.equal(summary.results[0].costUsd, 0.12)
 })

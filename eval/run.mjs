@@ -4,14 +4,11 @@ import {
   mkdirSync,
   readFileSync,
   rmSync,
-  statSync,
-  utimesSync,
   writeFileSync,
 } from "node:fs"
-import { randomUUID } from "node:crypto"
 import { tmpdir } from "node:os"
 import { dirname, join, resolve } from "node:path"
-import { spawn, spawnSync } from "node:child_process"
+import { spawn } from "node:child_process"
 import { fileURLToPath } from "node:url"
 import {
   cacheEntryDir,
@@ -25,140 +22,53 @@ import { loadPullRequestInput, preparePullRequestWorkspace, resolveGitHubToken }
 import { normalizeEvalModels } from "./lib/models.mjs"
 import { normalizeEvalInput, normalizeEvalInputs, parsePrReference } from "./lib/pr-input.mjs"
 import { REVIEW_CACHE_VERSION, reviewCacheKey } from "./lib/review-cache-key.mjs"
-import { reviewerContainerConfig } from "./lib/reviewer-runner.mjs"
+import { reviewerProcessConfig } from "./lib/reviewer-runner.mjs"
+import { reviewerIdentity } from "./lib/reviewer-identity.mjs"
 import { evalJobKey } from "./lib/job-key.mjs"
 import { readReviewResult, writeReviewArtifacts } from "./lib/review-artifacts.mjs"
 import { canonicalJobArtifacts, completedJobArtifacts } from "./lib/job-artifacts.mjs"
-import { stageOpenCodeAuth } from "./lib/opencode-auth.mjs"
 
 const repoRoot = dirname(dirname(fileURLToPath(import.meta.url)))
-const DEFAULT_BASE_IMAGE = "wearesingular/aml-agent-sandbox:opencode"
-const REVIEW_PROVIDER = "opencode"
+const REVIEW_PROVIDER = "pi"
 const EXTRACTED_ARTIFACTS = [
   "review.md",
   "review_transcript.md",
   "review_comments.json",
   "review_stats.json",
   "provider_completions.jsonl",
-  "docker.stdout.log",
-  "docker.stderr.log",
+  "reviewer.stdout.log",
+  "reviewer.stderr.log",
 ]
 const JUDGE_ARTIFACTS = [
   "review_model_context.json",
   "pr.diff",
 ]
-const activeDockerContainers = new Set()
-const EVAL_OWNER_LABEL = "nibble-review-eval-owner"
-const EVAL_OWNER_ID = randomUUID()
-const EVAL_OWNER_DIR = join(tmpdir(), "nibble-review-eval", "owners")
-const EVAL_OWNER_LEASE = join(EVAL_OWNER_DIR, EVAL_OWNER_ID)
-const OWNER_HEARTBEAT_MS = 5_000
-const OWNER_STALE_AFTER_MS = 15_000
-let ownerHeartbeat = null
+/** Process groups of running captures, reaped if the evaluator is interrupted. */
+const activeProcessGroups = new Set()
 
-/** Keeps evaluator ownership valid across isolated PID namespaces. */
-function startOwnerLease() {
-  mkdirSync(EVAL_OWNER_DIR, { recursive: true })
-  writeFileSync(EVAL_OWNER_LEASE, `${new Date().toISOString()}\n`, { mode: 0o600 })
-  ownerHeartbeat = setInterval(() => {
-    try {
-      const now = new Date()
-      utimesSync(EVAL_OWNER_LEASE, now, now)
-    } catch {
-      // A later heartbeat recreates no authority after the lease is removed.
-    }
-  }, OWNER_HEARTBEAT_MS)
-  ownerHeartbeat.unref()
-}
-
-/** Removes the ownership lease after active containers have been reaped. */
-function stopOwnerLease() {
-  if (ownerHeartbeat) {
-    clearInterval(ownerHeartbeat)
-    ownerHeartbeat = null
-  }
-  rmSync(EVAL_OWNER_LEASE, { force: true })
-}
-
-function removeDockerContainer(containerName) {
-  if (!containerName) {
-    return
-  }
-  // Keep failed removals tracked for the signal/exit batch while bounding a
-  // Docker daemon that is refusing to reap the review container.
-  const cleanup = spawnSync("docker", ["rm", "-f", containerName], { stdio: "ignore", timeout: 10_000 })
-  if (cleanup.status === 0) {
-    activeDockerContainers.delete(containerName)
-  }
-}
-
-function cleanupActiveDockerContainers() {
-  const containerNames = Array.from(activeDockerContainers)
-  if (containerNames.length === 0) {
-    return
-  }
-
-  // Exit handlers cannot wait for the detached cleanup used during ordinary
-  // jobs. Bound one synchronous batch so Ctrl-C cannot leave paid inference
-  // containers running after the evaluator exits.
-  const cleanup = spawnSync("docker", ["rm", "-f", ...containerNames], { stdio: "ignore", timeout: 10_000 })
-  if (cleanup.status === 0) {
-    activeDockerContainers.clear()
-  }
-}
-
-function cleanupStaleDockerContainers() {
-  const result = spawnSync(
-    "docker",
-    [
-      "ps",
-      "--filter",
-      "label=nibble-review-eval=true",
-      "--format",
-      `{{.Names}}\t{{.Label "${EVAL_OWNER_LABEL}"}}`,
-    ],
-    { encoding: "utf8" },
-  )
-  if (result.status !== 0) {
-    return
-  }
-
-  for (const line of result.stdout.split(/\r?\n/u).map((value) => value.trim()).filter(Boolean)) {
-    const [containerName, ownerId] = line.split("\t")
-    if (!containerName || !isOrphanedEvalContainer(ownerId)) {
-      continue
-    }
-    spawnSync("docker", ["rm", "-f", containerName], { stdio: "ignore" })
-  }
-}
-
-/** Keeps concurrent evaluators alive while still reaping containers from dead owners. */
-function isOrphanedEvalContainer(ownerId, leaseIsFresh = defaultOwnerLeaseIsFresh) {
-  return typeof ownerId === "string" && ownerId.length > 0 && !leaseIsFresh(ownerId)
-}
-
-function defaultOwnerLeaseIsFresh(ownerId) {
-  // Docker labels are external input. Restrict the value before resolving it
-  // beneath the shared lease directory.
-  if (!/^[a-zA-Z0-9-]+$/u.test(ownerId)) {
-    return false
-  }
+function signalProcessGroup(pid, signal) {
   try {
-    return Date.now() - statSync(join(EVAL_OWNER_DIR, ownerId)).mtimeMs <= OWNER_STALE_AFTER_MS
-  } catch {
-    return false
+    process.kill(-pid, signal)
+  } catch (error) {
+    if (error?.code !== "ESRCH") {
+      throw error
+    }
   }
 }
 
-process.on("exit", () => {
-  cleanupActiveDockerContainers()
-  stopOwnerLease()
-})
+/** Stops every running capture so Ctrl-C cannot leave paid inference running. */
+function stopActiveProcessGroups() {
+  for (const pid of activeProcessGroups) {
+    signalProcessGroup(pid, "SIGKILL")
+  }
+  activeProcessGroups.clear()
+}
+
+process.on("exit", stopActiveProcessGroups)
 
 for (const signal of ["SIGINT", "SIGTERM"]) {
   process.once(signal, () => {
-    cleanupActiveDockerContainers()
-    stopOwnerLease()
+    stopActiveProcessGroups()
     process.exit(signal === "SIGINT" ? 130 : 143)
   })
 }
@@ -196,8 +106,8 @@ function jobFiles(jobDir) {
     comments: existsSync(join(jobDir, "review_comments.json")) ? join(jobDir, "review_comments.json") : "",
     stats: existsSync(join(jobDir, "review_stats.json")) ? join(jobDir, "review_stats.json") : "",
     providerCompletions: existsSync(join(jobDir, "provider_completions.jsonl")) ? join(jobDir, "provider_completions.jsonl") : "",
-    stdout: existsSync(join(jobDir, "docker.stdout.log")) ? join(jobDir, "docker.stdout.log") : "",
-    stderr: existsSync(join(jobDir, "docker.stderr.log")) ? join(jobDir, "docker.stderr.log") : ""
+    stdout: existsSync(join(jobDir, "reviewer.stdout.log")) ? join(jobDir, "reviewer.stdout.log") : "",
+    stderr: existsSync(join(jobDir, "reviewer.stderr.log")) ? join(jobDir, "reviewer.stderr.log") : ""
   }
 }
 
@@ -213,6 +123,9 @@ function runProcess({ command, args, cwd, env, stdoutFile, stderrFile, timeoutMs
       stdio: ["ignore", "pipe", "pipe"],
       detached: true,
     })
+    if (child.pid) {
+      activeProcessGroups.add(child.pid)
+    }
     let settled = false
     let timedOut = false
     let errorMessage = ""
@@ -222,6 +135,9 @@ function runProcess({ command, args, cwd, env, stdoutFile, stderrFile, timeoutMs
         return
       }
       settled = true
+      if (!timedOut && child.pid) {
+        activeProcessGroups.delete(child.pid)
+      }
       clearTimeout(timer)
       if (!timedOut && escalationTimer) {
         clearTimeout(escalationTimer)
@@ -254,9 +170,9 @@ function runProcess({ command, args, cwd, env, stdoutFile, stderrFile, timeoutMs
           signalGroup("SIGTERM")
           escalationTimer = setTimeout(() => signalGroup("SIGKILL"), 5_000)
           escalationTimer.unref()
-          // Docker may never emit `close` after a daemon or container hang.
+          // A hung provider child may never let the group emit `close`.
           // Resolve at the safety boundary so the worker can record failure
-          // and release the pool; the escalation above still reaps the child.
+          // and release the pool; the escalation above still reaps the group.
           finish(1)
         }, timeoutMs).unref()
       : null
@@ -271,39 +187,22 @@ function runProcess({ command, args, cwd, env, stdoutFile, stderrFile, timeoutMs
   })
 }
 
-async function buildDockerImage({ image, baseImage }) {
-  const stdoutFile = resolve(repoRoot, "eval", "runs", ".docker-build.stdout.log")
-  const stderrFile = resolve(repoRoot, "eval", "runs", ".docker-build.stderr.log")
-  console.log(`building reviewer image ${image}`)
-  const args = ["build", "-t", image]
-  if (baseImage) {
-    args.push("--build-arg", `BASE_IMAGE=${baseImage}`)
-  }
-  args.push(".")
+async function buildReviewer() {
+  const stdoutFile = resolve(repoRoot, "eval", "runs", ".build.stdout.log")
+  const stderrFile = resolve(repoRoot, "eval", "runs", ".build.stderr.log")
+  console.log("building reviewer")
   const run = await runProcess({
-    command: "docker",
-    args,
+    command: "npm",
+    args: ["run", "build"],
     cwd: repoRoot,
     env: process.env,
     stdoutFile,
     stderrFile,
-    timeoutMs: 30 * 60_000,
+    timeoutMs: 10 * 60_000,
   })
   if (run.status !== 0) {
-    throw new Error(`docker build failed: ${run.error}; logs: ${stdoutFile}, ${stderrFile}`)
+    throw new Error(`reviewer build failed: ${run.error}; logs: ${stdoutFile}, ${stderrFile}`)
   }
-}
-
-/** Resolves mutable local tags so the run manifest records exact image inputs. */
-function dockerImageId(image) {
-  const result = spawnSync("docker", ["image", "inspect", "--format", "{{.Id}}", image], {
-    encoding: "utf8",
-  })
-  const id = result.status === 0 ? result.stdout.trim() : ""
-  if (!id) {
-    throw new Error(`could not resolve Docker image ${image}`)
-  }
-  return id
 }
 
 function reviewBodyFromComments(comments) {
@@ -368,8 +267,6 @@ function parseArgs(argv) {
     force: false,
     cacheDir: resolve(repoRoot, "eval", "cache", "reviews"),
     useConfigInput: true,
-    image: "nibble-review:eval",
-    baseImage: undefined,
     skipBuild: false,
   }
 
@@ -397,10 +294,6 @@ function parseArgs(argv) {
       options.force = true
     } else if (arg === "--cache-dir") {
       options.cacheDir = resolve(argv[++index])
-    } else if (arg === "--image") {
-      options.image = argv[++index] || ""
-    } else if (arg === "--base-image") {
-      options.baseImage = argv[++index] || ""
     } else if (arg === "--skip-build") {
       options.skipBuild = true
     } else if (arg === "--no-config-input") {
@@ -428,13 +321,11 @@ Options:
   --concurrency <n>         Concurrent captures. Default: config or 1
   --target-duration-ms <ms> Advisory duration target. Default: config or 600000
   --review-timeout-ms <ms>  Hard per-review safety timeout. Default: config or 1800000 (30 minutes)
-  --keep-scratch            Keep temporary checkout/HOME/XDG for debugging
+  --keep-scratch            Keep the temporary checkout and HOME for debugging
   --append                  Add missing PR x model jobs to an existing --out run
   --force                   Bypass the global review cache for jobs that run
   --cache-dir <dir>         Global review cache. Default: eval/cache/reviews
-  --image <tag>             Docker image tag. Default: nibble-review:eval
-  --base-image <tag>        AML base image. Example: wearesingular/aml-agent-sandbox:0.5.2-opencode
-  --skip-build              Use the existing image instead of building Dockerfile
+  --skip-build              Use the existing dist/ instead of running npm run build
   --no-config-input         Use only --pr values, ignoring config.input
 `)
 }
@@ -502,21 +393,18 @@ function sameCaptureJob(existing, requested) {
   )
 }
 
-/** Prevents completed captures from crossing an unverifiable reviewer image boundary. */
-function validateAppendImageIdentity(existingRun, { image, imageId, baseImage, baseImageId }) {
+/** Prevents completed captures from mixing reviewer revisions in one run. */
+function validateAppendReviewerIdentity(existingRun, { reviewerId }) {
   if (!existingRun) {
     return
   }
 
   const hasCompletedJobs = (existingRun.jobs || []).some((job) => job.status === "completed")
-  if (hasCompletedJobs && (!existingRun.imageId || !existingRun.baseImageId)) {
-    throw new Error("cannot append a legacy run with completed jobs and no immutable image IDs; choose a new --out directory")
+  if (hasCompletedJobs && !existingRun.reviewerId) {
+    throw new Error("cannot append to a run with completed jobs and no reviewer identity; choose a new --out directory")
   }
-  if (existingRun.imageId && existingRun.imageId !== imageId) {
-    throw new Error(`cannot append after image ${image} changed from ${existingRun.imageId} to ${imageId}`)
-  }
-  if (existingRun.baseImageId && existingRun.baseImageId !== baseImageId) {
-    throw new Error(`cannot append after base image ${baseImage} changed from ${existingRun.baseImageId} to ${baseImageId}`)
+  if (existingRun.reviewerId && existingRun.reviewerId !== reviewerId) {
+    throw new Error(`cannot append after the reviewer changed from ${existingRun.reviewerId} to ${reviewerId}`)
   }
 }
 
@@ -570,7 +458,7 @@ function restoreReviewCache({ cacheDir, jobDir, job, key, startedAt }) {
   return result
 }
 
-function saveReviewCache({ cacheDir, key, jobDir, result, job, reviewerImageId }) {
+function saveReviewCache({ cacheDir, key, jobDir, result, job, reviewerId }) {
   if (result.status !== "completed" || result.outputBytes <= 0) {
     return
   }
@@ -589,7 +477,7 @@ function saveReviewCache({ cacheDir, key, jobDir, result, job, reviewerImageId }
     model: job.model,
     runner: "aml",
     provider: job.provider,
-    reviewerImageId,
+    reviewerId,
     input: job.input,
     outputBytes: result.outputBytes,
     createdAt: new Date().toISOString(),
@@ -631,13 +519,10 @@ async function runJob(job, options) {
   const transcriptFile = join(jobDir, "review_transcript.md")
   const commentsFile = join(jobDir, "review_comments.json")
   const statsFile = join(jobDir, "review_stats.json")
-  const stdoutFile = join(jobDir, "docker.stdout.log")
-  const stderrFile = join(jobDir, "docker.stderr.log")
+  const stdoutFile = join(jobDir, "reviewer.stdout.log")
+  const stderrFile = join(jobDir, "reviewer.stderr.log")
   const artifactDir = join(jobDir, "artifacts")
-  const containerName = `nibble-eval-${EVAL_OWNER_ID.slice(0, 8)}-${job.index}-${Date.now()}`
-  // Keep credentials and the checkout in sibling mounts. Exposing the same
-  // checkout under a second container path makes OpenCode reject the alias.
-  const scratchDir = join(tmpdir(), "nibble-review-eval", containerName)
+  const scratchDir = join(tmpdir(), "nibble-review-eval", `${jobSlug}-${Date.now()}`)
   const runtimeDir = join(scratchDir, "runtime")
   const workspaceDir = join(scratchDir, "workspace")
 
@@ -646,7 +531,6 @@ async function runJob(job, options) {
 
   const startedAt = new Date().toISOString()
   let preserveScratch = false
-  let stagedOpenCodeAuth = []
   let captureInput = job.input
   console.log(`[${job.index + 1}/${job.total}] ${job.input.ref} ${job.model}`)
 
@@ -654,7 +538,7 @@ async function runJob(job, options) {
     const loaded = await loadPullRequestInput(job.input, options.githubToken)
     captureInput = loaded.input
     const captureJob = { ...job, input: captureInput }
-    const reviewer = reviewerContainerConfig(job)
+    const reviewer = reviewerProcessConfig(job, { repoRoot })
 
     // Inputs belong to the eval boundary, not the reviewer workflow. The
     // reviewer remains in memory while the judge still receives the exact PR
@@ -665,7 +549,7 @@ async function runJob(job, options) {
       runner: "aml",
       provider: job.provider,
       model: job.model,
-      reviewerImageId: options.imageId,
+      reviewerId: options.reviewerId,
       input: captureInput,
       context: loaded.context,
       diffText: loaded.diffText,
@@ -687,72 +571,31 @@ async function runJob(job, options) {
     preserveScratch = options.keepScratch
 
     await preparePullRequestWorkspace(captureInput, workspaceDir, options.githubToken)
-    for (const directory of ["home", "xdg/config", "xdg/data", "xdg/cache", "xdg/state"]) {
-      mkdirSync(join(runtimeDir, directory), { recursive: true })
+    mkdirSync(join(runtimeDir, "home"), { recursive: true })
+    if (reviewer.inheritedEnvironment.length === 0) {
+      throw new Error("no model credentials found; export the provider key pi needs, e.g. OPENCODE_API_KEY")
     }
 
-    if (reviewer.usesOpenCodeAuth) {
-      stagedOpenCodeAuth = stageOpenCodeAuth(join(runtimeDir, "xdg", "data"))
-    }
-
-    const missingEnvironment = reviewer.requiredEnvironment.filter(key => !String(process.env[key] || "").trim())
-    if (missingEnvironment.length > 0) {
-      throw new Error(`missing required reviewer environment: ${missingEnvironment.join(", ")}`)
-    }
-
-    const dockerArgs = [
-      "run",
-      "--rm",
-      "--name",
-      containerName,
-      "--label",
-      "nibble-review-eval=true",
-      "--label",
-      `${EVAL_OWNER_LABEL}=${EVAL_OWNER_ID}`,
-      "--entrypoint",
-      reviewer.command,
-      "--workdir",
-      "/workspace",
-      "--env",
-      "GH_TOKEN",
-      "--env",
-      "REVIEW_IGNORE_HISTORY",
-      "--env",
-      "HOME=/tmp/.nibble-review/eval-runtime/home",
-      "--env",
-      "XDG_CONFIG_HOME=/tmp/.nibble-review/eval-runtime/xdg/config",
-      "--env",
-      "XDG_DATA_HOME=/tmp/.nibble-review/eval-runtime/xdg/data",
-      "--env",
-      "XDG_CACHE_HOME=/tmp/.nibble-review/eval-runtime/xdg/cache",
-      "--env",
-      "XDG_STATE_HOME=/tmp/.nibble-review/eval-runtime/xdg/state",
-      ...reviewer.inheritedEnvironment.flatMap(key => ["--env", key]),
-      ...Object.keys(reviewer.environment).flatMap(key => ["--env", key]),
-      "--volume",
-      `${runtimeDir}:/tmp/.nibble-review/eval-runtime`,
-      "--volume",
-      `${workspaceDir}:/workspace`,
-      options.image,
-      "--repo",
-      captureInput.repository,
-      "--pr",
-      String(captureInput.number),
-      "--workspace",
-      "/workspace",
-    ]
-    if (typeof process.getuid === "function" && typeof process.getgid === "function") {
-      dockerArgs.splice(4, 0, "--user", `${process.getuid()}:${process.getgid()}`)
-    }
-
-    activeDockerContainers.add(containerName)
+    // The reviewer gets only what production gets: a GitHub token, the model,
+    // its credentials, and a private HOME. pi state never touches the host.
     const run = await runProcess({
-      command: "docker",
-      args: dockerArgs,
+      command: reviewer.command,
+      args: [
+        ...reviewer.args,
+        "--repo",
+        captureInput.repository,
+        "--pr",
+        String(captureInput.number),
+        "--workspace",
+        workspaceDir,
+      ],
       cwd: repoRoot,
       env: {
-        ...process.env,
+        PATH: process.env.PATH,
+        HOME: join(runtimeDir, "home"),
+        TMPDIR: runtimeDir,
         GH_TOKEN: options.githubToken,
+        ...Object.fromEntries(reviewer.inheritedEnvironment.map((key) => [key, process.env[key]])),
         ...reviewer.environment,
         REVIEW_IGNORE_HISTORY: captureInput.ignoreHistory ? "true" : "false",
       },
@@ -761,8 +604,8 @@ async function runJob(job, options) {
       timeoutMs: options.reviewTimeoutMs,
     })
     if (run.status === 0) {
-      // The reviewer emits one typed result. Render stable judge views outside
-      // the production image so eval concerns never enter the runtime.
+      // The reviewer emits one typed result. Render stable judge views here so
+      // eval concerns never enter the production runtime.
       try {
         writeReviewArtifacts(readReviewResult(stdoutFile), jobDir)
       } catch (error) {
@@ -807,7 +650,7 @@ async function runJob(job, options) {
       jobDir,
       result,
       job: captureJob,
-      reviewerImageId: options.imageId,
+      reviewerId: options.reviewerId,
     })
     return result
   } catch (error) {
@@ -830,11 +673,6 @@ async function runJob(job, options) {
     writeJson(join(jobDir, "result.json"), result)
     return result
   } finally {
-    removeDockerContainer(containerName)
-    // OpenCode auth is equally sensitive when --keep-scratch preserves logs.
-    for (const authFile of stagedOpenCodeAuth) {
-      rmSync(authFile, { force: true })
-    }
     if (!preserveScratch) {
       rmSync(scratchDir, { recursive: true, force: true })
     }
@@ -855,7 +693,6 @@ async function main() {
   const targetDurationMs = positiveInteger(options.targetDurationMs, config.targetDurationMs, "targetDurationMs")
   const reviewTimeoutMs = positiveInteger(options.reviewTimeoutMs, config.reviewTimeoutMs, "reviewTimeoutMs")
   const keepScratch = options.keepScratch ?? config.keepScratch
-  const baseImage = options.baseImage || config.baseImage || DEFAULT_BASE_IMAGE
   const githubToken = await resolveGitHubToken(process.env)
   const runFile = join(options.outDir, "run.json")
   const existingRun = options.append ? readJson(runFile, null) : null
@@ -868,8 +705,6 @@ async function main() {
     const requestedIdentity = {
       runner: "aml",
       provider: REVIEW_PROVIDER,
-      image: options.image,
-      baseImage,
     }
     for (const key of Object.keys(requestedIdentity)) {
       if ((existingRun[key] ?? null) !== requestedIdentity[key]) {
@@ -879,14 +714,11 @@ async function main() {
   }
 
   mkdirSync(options.outDir, { recursive: true })
-  startOwnerLease()
-  cleanupStaleDockerContainers()
   if (!options.skipBuild) {
-    await buildDockerImage({ image: options.image, baseImage })
+    await buildReviewer()
   }
-  const imageId = dockerImageId(options.image)
-  const baseImageId = dockerImageId(baseImage)
-  validateAppendImageIdentity(existingRun, { image: options.image, imageId, baseImage, baseImageId })
+  const reviewer = reviewerIdentity(repoRoot)
+  validateAppendReviewerIdentity(existingRun, { reviewerId: reviewer.id })
   const runConfig = {
     startedAt,
     configFile: options.configFile,
@@ -899,10 +731,10 @@ async function main() {
     reviewTimeoutMs,
     keepScratch,
     cacheDir: options.cacheDir,
-    image: options.image,
-    imageId,
-    baseImage,
-    baseImageId,
+    reviewerId: reviewer.id,
+    reviewerCommit: reviewer.commit,
+    reviewerDirtyHash: reviewer.dirtyHash,
+    piVersion: reviewer.piVersion,
     skipBuild: options.skipBuild,
   }
   writeJson(join(options.outDir, "run-config.json"), runConfig)
@@ -937,8 +769,7 @@ async function main() {
         keepScratch,
         force: options.force,
         cacheDir: options.cacheDir,
-        image: options.image,
-        imageId,
+        reviewerId: reviewer.id,
       })
       completedResults.push(result)
       writeRunFile({ outDir: options.outDir, runConfig, preservedJobs, results: completedResults })
@@ -953,7 +784,7 @@ async function main() {
   console.log(`run: ${options.outDir}`)
 }
 
-export { isOrphanedEvalContainer, runProcess, sameCaptureJob, validateAppendImageIdentity, writeRunFile }
+export { runProcess, sameCaptureJob, validateAppendReviewerIdentity, writeRunFile }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   main().catch((error) => {

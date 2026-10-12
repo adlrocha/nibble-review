@@ -117,9 +117,8 @@ function stats(result, generatedAt, runtimeDir) {
     phases: phases(result),
     attempts: result.attempts,
     providerCompletions: result.providerCompletions || [],
-    amlUsage: result.amlUsage,
-    usageSource: result.usageSource,
-    usageNote: result.usageNote,
+    // pi-acp reports no usage over ACP; the runner reads pi's session log instead.
+    usageSource: result.provider === "pi" && result.usage.estimatedCostUsd !== null ? "pi-session" : "aml-acp",
     traceSummaries: result.traceSummaries || [],
     totals: {
       durationMs: result.durationMs,

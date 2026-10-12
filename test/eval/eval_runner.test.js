@@ -8,14 +8,10 @@ import { evalJobKey } from "../../eval/lib/job-key.mjs"
 import { JudgeAttemptStore } from "../../eval/lib/judge-attempts.mjs"
 import { normalizeEvalModel } from "../../eval/lib/models.mjs"
 import { reviewCacheKey } from "../../eval/lib/review-cache-key.mjs"
-import { reviewerContainerConfig } from "../../eval/lib/reviewer-runner.mjs"
-import {
-  isOrphanedEvalContainer,
-  runProcess,
-  sameCaptureJob,
-  validateAppendImageIdentity,
-  writeRunFile
-} from "../../eval/run.mjs"
+import { piJudgeCommand } from "../../eval/lib/pi-judge.mjs"
+import { reviewerIdentity } from "../../eval/lib/reviewer-identity.mjs"
+import { reviewerProcessConfig } from "../../eval/lib/reviewer-runner.mjs"
+import { runProcess, sameCaptureJob, validateAppendReviewerIdentity, writeRunFile } from "../../eval/run.mjs"
 import { completedJobArtifacts } from "../../eval/lib/job-artifacts.mjs"
 import { resolveJudgeConfigFile } from "../../eval/judge.mjs"
 
@@ -116,21 +112,6 @@ test("judge retries preserve prior raw evidence and update canonical aliases", t
   assert.equal(restoredStore.start().number, 3)
 })
 
-test("stale cleanup ignores fresh and unowned evaluator leases", () => {
-  assert.equal(
-    isOrphanedEvalContainer("", () => false),
-    false
-  )
-  assert.equal(
-    isOrphanedEvalContainer("owner-123", () => true),
-    false
-  )
-  assert.equal(
-    isOrphanedEvalContainer("owner-123", () => false),
-    true
-  )
-})
-
 test("run checkpoints are running and final snapshots receive endedAt", () => {
   const directory = mkdtempSync(join(tmpdir(), "nibble-eval-run-file-"))
   const runConfig = { startedAt: "2026-08-24T00:00:00.000Z", models: ["test-model"] }
@@ -226,19 +207,17 @@ test("bare eval model names use the OpenCode provider namespace", () => {
   assert.equal(normalizeEvalModel("deepseek-v4-flash", "model", "opencode-go"), "opencode-go/deepseek-v4-flash")
 })
 
-test("eval job identity includes the OpenCode provider", () => {
-  const key = evalJobKey({
-    runner: "aml",
-    provider: "opencode",
-    model: "opencode/deepseek-v4-flash",
-    input
-  })
-
-  assert.match(key, /^aml-opencode__/)
+test("eval job identity includes the reviewer provider", () => {
+  assert.match(
+    evalJobKey({ runner: "aml", provider: "pi", model: "opencode-go/deepseek-v4-flash", input }),
+    /^aml-pi__/
+  )
+  // Historical captures without a provider were OpenCode runs.
+  assert.match(evalJobKey({ runner: "aml", model: "opencode-go/deepseek-v4-flash", input }), /^aml-opencode__/)
 })
 
 test("append reuse requires identical review-context semantics", () => {
-  const captured = { runner: "aml", provider: "opencode", model: "opencode-go/deepseek-v4-flash", input }
+  const captured = { runner: "aml", provider: "pi", model: "opencode-go/deepseek-v4-flash", input }
 
   assert.equal(sameCaptureJob(captured, structuredClone(captured)), true)
   assert.equal(sameCaptureJob(captured, { ...captured, input: { ...input, ignoreHistory: false } }), false)
@@ -248,74 +227,88 @@ test("append reuse requires identical review-context semantics", () => {
   assert.equal(sameCaptureJob(captured, { ...captured, input: { ...input, headSha: "3".repeat(40) } }), false)
 })
 
-test("append reuse requires immutable image identity for completed legacy jobs", () => {
-  const requested = {
-    image: "reviewer:local",
-    imageId: "sha256:reviewer",
-    baseImage: "sandbox:local",
-    baseImageId: "sha256:sandbox"
-  }
+test("append reuse requires the same reviewer identity for completed jobs", () => {
+  const requested = { reviewerId: "abc123@pi-1.1.0" }
 
   assert.throws(
-    () => validateAppendImageIdentity({ jobs: [{ status: "completed" }] }, requested),
-    /legacy run with completed jobs and no immutable image IDs/
+    () => validateAppendReviewerIdentity({ jobs: [{ status: "completed" }] }, requested),
+    /completed jobs and no reviewer identity/
   )
-  assert.doesNotThrow(() => validateAppendImageIdentity({ jobs: [{ status: "failed" }] }, requested))
+  assert.doesNotThrow(() => validateAppendReviewerIdentity({ jobs: [{ status: "failed" }] }, requested))
+  assert.doesNotThrow(() => validateAppendReviewerIdentity(null, requested))
   assert.throws(
-    () =>
-      validateAppendImageIdentity(
-        { jobs: [{ status: "completed" }], imageId: "sha256:old", baseImageId: "sha256:sandbox" },
-        requested
-      ),
-    /reviewer:local changed from sha256:old to sha256:reviewer/
+    () => validateAppendReviewerIdentity({ jobs: [{ status: "completed" }], reviewerId: "old@pi-1.0.0" }, requested),
+    /reviewer changed from old@pi-1.0.0 to abc123@pi-1.1.0/
   )
   assert.doesNotThrow(() =>
-    validateAppendImageIdentity(
-      { jobs: [{ status: "completed" }], imageId: "sha256:reviewer", baseImageId: "sha256:sandbox" },
-      requested
-    )
+    validateAppendReviewerIdentity({ jobs: [{ status: "completed" }], reviewerId: "abc123@pi-1.1.0" }, requested)
   )
 })
 
-test("eval reviewer selection maps OpenCode to the production executable", () => {
-  assert.deepEqual(reviewerContainerConfig({ model: "opencode-go/deepseek-v4-flash" }), {
-    command: "/usr/local/bin/review_runner",
-    environment: {
-      REVIEW_MODEL: "opencode-go/deepseek-v4-flash"
-    },
-    inheritedEnvironment: [
-      "ANTHROPIC_API_KEY",
-      "CONTEXT7_API_KEY",
-      "GOOGLE_GENERATIVE_AI_API_KEY",
-      "OPENCODE_API_KEY",
-      "OPENROUTER_API_KEY",
-      "Z_AI_API_KEY"
-    ],
-    requiredEnvironment: [],
-    usesOpenCodeAuth: true
-  })
+test("eval captures run the production reviewer CLI with model credentials only", () => {
+  const config = reviewerProcessConfig(
+    { model: "opencode-go/deepseek-v4-flash" },
+    {
+      repoRoot: "/repo",
+      environment: { OPENCODE_API_KEY: "key", ANTHROPIC_API_KEY: "", GH_TOKEN: "ghs", HOME: "/home/me" }
+    }
+  )
+  assert.equal(config.command, process.execPath)
+  assert.deepEqual(config.args, ["/repo/dist/cli/review.js"])
+  assert.deepEqual(config.environment, { REVIEW_MODEL: "opencode-go/deepseek-v4-flash" })
+  assert.deepEqual(config.inheritedEnvironment, ["OPENCODE_API_KEY"])
 })
 
-test("review cache identity separates OpenCode models and reviewer images", () => {
+test("the pi judge is read-only, isolated, and receives only model credentials", () => {
+  const judge = piJudgeCommand({
+    repoRoot: "/repo",
+    model: "opencode-go/deepseek-v4-flash",
+    files: ["/job/review.md", "/job/pr.diff"],
+    prompt: "Score this review.",
+    home: "/scratch/home",
+    environment: { PATH: "/bin", OPENCODE_API_KEY: "key", GH_TOKEN: "ghs" }
+  })
+  assert.equal(judge.args.at(-1), "Score this review.")
+  assert.deepEqual(judge.args.slice(-3, -1), ["@/job/review.md", "@/job/pr.diff"])
+  assert.equal(judge.args[judge.args.indexOf("--tools") + 1], "read,grep,find,ls")
+  for (const flag of ["-p", "--no-session", "--no-extensions", "--no-context-files"]) {
+    assert.ok(judge.args.includes(flag), flag)
+  }
+  assert.equal(judge.env.OPENCODE_API_KEY, "key")
+  assert.equal(judge.env.GH_TOKEN, undefined)
+  assert.equal(judge.env.HOME, "/scratch/home")
+})
+
+test("reviewer identity names the commit, pending reviewer changes, and pi version", () => {
+  const identity = reviewerIdentity(join(import.meta.dirname, "..", ".."))
+  assert.match(identity.commit, /^[0-9a-f]{40}$/u)
+  assert.match(identity.piVersion, /^\d+\.\d+\.\d+/u)
+  assert.equal(
+    identity.id,
+    `${identity.commit}${identity.dirtyHash ? `+${identity.dirtyHash}` : ""}@pi-${identity.piVersion}`
+  )
+})
+
+test("review cache identity separates models and reviewer revisions", () => {
   const context = { baseSha: "base", headSha: "head" }
-  const common = { input, context, diffText: "diff", reviewerImageId: "sha256:image-a" }
+  const common = { input, context, diffText: "diff", reviewerId: "commit-a@pi-1.1.0" }
   const deepseek = reviewCacheKey({
     ...common,
     runner: "aml",
-    provider: "opencode",
+    provider: "pi",
     model: "opencode-go/deepseek-v4-flash"
   })
   const minimax = reviewCacheKey({
     ...common,
     runner: "aml",
-    provider: "opencode",
+    provider: "pi",
     model: "opencode-go/minimax-m3"
   })
   const rebuilt = reviewCacheKey({
     ...common,
-    reviewerImageId: "sha256:image-b",
+    reviewerId: "commit-b@pi-1.1.0",
     runner: "aml",
-    provider: "opencode",
+    provider: "pi",
     model: "opencode-go/deepseek-v4-flash"
   })
 

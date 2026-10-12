@@ -1,10 +1,10 @@
 # Evaluating reviewer changes
 
-The eval framework runs the production reviewer against exact pull-request revisions without publishing to GitHub. Our working corpus mixes private Singular pull requests with public pull requests from projects such as Next.js, TanStack Query, and tRPC. We choose changes with review history we can inspect and enough variety to exercise different review paths.
+The eval framework runs the production reviewer against exact pull-request revisions without publishing to GitHub. The committed corpus uses public pull requests from projects such as Next.js, TanStack Query, and tRPC; private corpora belong in the ignored `eval/config.local.ts`. We choose changes with review history we can inspect and enough variety to exercise different review paths.
 
 The framework measures this reviewer, with this rubric, on the code we selected. It is not a foolproof benchmark or a general model leaderboard. An LLM judge produces the score. It can miss subtle errors, reward a plausible false finding, or disagree with a human reviewer. We use it as a ruler for before-and-after changes, then read the generated reviews and compare their findings with the diff and real pull-request history.
 
-Capture, judgment, reporting, and comparison stay separate so every score can be traced back to the review, diff, model, image, rubric, and judge that produced it.
+Capture, judgment, reporting, and comparison stay separate so every score can be traced back to the review, diff, model, reviewer revision, rubric, and judge that produced it.
 
 Real runs may send private source to an external model provider and may cost money. Start with one PR, one model, and concurrency 1. Get explicit approval before sending a private corpus to a provider that has not already been approved for that run.
 
@@ -12,16 +12,16 @@ Real runs may send private source to an external model provider and may cost mon
 
 ## How the framework works
 
-Each matrix cell is one exact pull-request revision reviewed by one model through one reviewer image.
+Each matrix cell is one exact pull-request revision reviewed by one model through one reviewer revision.
 
 | Stage | Input | Result |
 | --- | --- | --- |
-| Capture | Pinned PR revision, reviewer image, model, and history mode | A production dry-run review plus its diff, context, transcript, findings, telemetry, and completion evidence |
+| Capture | Pinned PR revision, reviewer revision, model, and history mode | A production dry-run review plus its diff, context, transcript, findings, telemetry, and completion evidence |
 | Judge | Captured review, transcript, diff, normalized PR context, and fixed rubric | A score and written assessment for each rubric question |
 | Report | One completed capture run and its judgments | An HTML report and `summary.json` with scores, verdicts, findings, failures, time, tokens, and separate reviewer and judge costs |
 | Compare | Completed summaries from one or more runs | A cross-run HTML report and JSON summary grouped by model, reasoning variant, or reviewer version |
 
-The capture uses the same Docker image and `review_runner` boundary as production, but never passes `--publish`. The judge is a separate model call. Keeping those steps apart lets us inspect a weak review before deciding whether the reviewer, rubric, judge, or corpus caused the score.
+The capture runs the same reviewer CLI (`dist/cli/review.js`) and pi isolation as the GitHub Action, but never passes `--publish`. The judge is a separate model call. Keeping those steps apart lets us inspect a weak review before deciding whether the reviewer, rubric, judge, or corpus caused the score.
 
 ## Reading the score
 
@@ -35,7 +35,7 @@ Small score changes are not proof on their own. Model output varies between atte
 
 ## Latest reviewer-change snapshot
 
-On 2026-08-31, the explicit `<ReviewRouter>` and ordered `<ReviewPublication>` implementation ran against the same ten pinned, history-blind private pull-request revisions as the previous leaf-first AML snapshot. Both snapshots used `opencode-go/deepseek-v4-flash` for review and judgment with the same rubric.
+This snapshot predates the switch from OpenCode to pi and was measured upstream; re-baseline before comparing pi captures against it. On 2026-08-31, the explicit `<ReviewRouter>` and ordered `<ReviewPublication>` implementation ran against the same ten pinned, history-blind private pull-request revisions as the previous leaf-first AML snapshot. Both snapshots used `opencode-go/deepseek-v4-flash` for review and judgment with the same rubric.
 
 | Metric | Previous AML tree | Router tree | Change |
 | --- | ---: | ---: | ---: |
@@ -59,12 +59,12 @@ This is one directly comparable before-and-after run, not a repeated-run confide
 
 ## Requirements
 
-- Docker;
+- Node.js 26 or newer;
 - installed repository dependencies;
 - `GH_TOKEN`, `GITHUB_TOKEN`, or an authenticated GitHub CLI with read access to every input PR;
-- OpenCode credentials.
+- the model provider key pi needs, exported as `*_API_KEY` (for example `OPENCODE_API_KEY`).
 
-OpenCode prefers `OPENCODE_API_KEY`. If it is absent, the framework stages disposable copies of the host OpenCode auth files in an isolated data directory and removes them before retaining scratch output.
+Captures and judgments receive only `*_API_KEY` variables, a GitHub token, and a private `HOME`; pi never reads the host's `~/.pi` login.
 
 ## Configure a corpus
 
@@ -96,7 +96,7 @@ Always pin `base` and `head` for a benchmark. Capture fails when the live PR no 
 
 ## Start with a canary
 
-Run one known PR through the current image before spending a full corpus:
+Run one known PR through the current reviewer before spending a full corpus:
 
 ```bash
 npm run eval -- \
@@ -108,7 +108,7 @@ npm run eval -- \
   --force
 ```
 
-The capture builds the current Dockerfile, prepares the exact checkout on the host, mounts it at the review workspace, and invokes the production `review_runner` without `--publish`.
+The capture runs `npm run build`, prepares the exact checkout in a scratch directory, and invokes the production reviewer CLI on it without `--publish`.
 
 Inspect the generated review and completion evidence before starting a matrix. A canary should prove that the expected model ran, every phase completed, findings reached the typed queue, required artifacts exist, and no GitHub write occurred.
 
@@ -170,7 +170,7 @@ npm run eval:benchmark -- \
 
 ## Compare models fairly
 
-Build the reviewer image once, then reuse that exact image for every model in the comparison:
+Run every model in a comparison from the same reviewer revision:
 
 ```bash
 npm run eval -- \
@@ -184,21 +184,20 @@ npm run eval -- \
   --model opencode-go/glm-5.3-flash \
   --out eval/runs/current-glm \
   --force \
-  --skip-build \
-  --image nibble-review:eval
+  --skip-build
 ```
 
 Keep these fixed across the runs:
 
 - base and head SHAs;
 - `ignoreHistory` mode;
-- reviewer image ID and base image ID;
+- reviewer identity (commit, uncommitted reviewer changes, and pi version);
 - judge model, prompt, rubric, and timeout;
 - concurrency unless concurrency itself is under test.
 
-The run manifest records both image IDs. `--skip-build` is safe only after verifying that the local tag still points at the image recorded by the first run.
+The run manifest records `reviewerId`. `--append` refuses to mix reviewer identities, and the review cache never restores a capture from another identity.
 
-Production and capture use OpenCode. Model comparisons remain explicit through `--model` and share the same provider boundary.
+Production and capture use pi. Model comparisons remain explicit through `--model` and share the same provider boundary. Judge cost is not reported: `pi -p` prints only the final text.
 
 ## What counts as a completed run
 
@@ -210,8 +209,7 @@ Do not accept a process exit code or a generated HTML file as proof by itself. B
 - every job has non-empty `provider_completions.jsonl` with the requested provider, model, and terminal stop reason;
 - every judged job has a completed `judge.json` and retained attempt evidence;
 - `summary.json` contains only completed capture and judgment results;
-- the image ID in `run.json` matches the image that was intended for the run;
-- no eval containers remain active.
+- the `reviewerId` in `run.json` matches the reviewer revision intended for the run.
 
 Keep raw evidence for failed attempts. A retry can produce the selected result, but it does not erase the failed attempt's time, cost, model identity, or diagnostic value.
 
@@ -222,7 +220,7 @@ The ignored `eval/config.local.ts` is the local tracker for private fixed-revisi
 - retain the full 40-character base and head SHAs;
 - give each PR a short label that explains why it is in the corpus;
 - keep old corpus arrays intact when adding a new check cohort;
-- record the reviewer commit, image, sandbox version, provider model, judge model, completion count, score, time, cost, and finding count in comments;
+- record the reviewer identity, pi version, provider model, judge model, completion count, score, time, cost, and finding count in comments;
 - state whether the score predates or follows a reviewer change;
 - identify the one-PR canary used before the batch;
 - never move a historical pin to the PR's latest head.
@@ -245,7 +243,7 @@ Do not add a skill or Tool because a reviewer mentioned it once. First prove tha
 Commit the eval code, rubric, public example config, documentation, and ignore rules. Keep these local:
 
 - private repository names, PR numbers, titles, and pinned revisions;
-- captures, caches, generated reports, and Docker logs;
+- captures, caches, generated reports, and reviewer logs;
 - generated review text and finding excerpts;
 - human review exports;
 - local paths, credentials, auth files, and provider tokens.

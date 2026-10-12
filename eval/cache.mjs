@@ -18,12 +18,6 @@ const HISTORICAL_RUNTIME_ARTIFACTS = [
   "audit_model_context.json",
   "review_queue.json",
   "pr.diff",
-  "opencode_review.log",
-  "opencode_review.log.jsonl",
-  "opencode_audit.log",
-  "opencode_audit.log.jsonl",
-  "opencode_synthesis.log",
-  "opencode_synthesis.log.jsonl",
 ];
 
 function readJson(file) {
@@ -112,8 +106,8 @@ function copyReviewArtifacts({ entryDir, runDir, job }) {
     "review_comments.json": artifactPath(runDir, job.files?.comments) || join(jobDir, "review_comments.json"),
     "review_stats.json": artifactPath(runDir, job.files?.stats) || join(jobDir, "review_stats.json"),
     "provider_completions.jsonl": artifactPath(runDir, job.files?.providerCompletions) || join(jobDir, "provider_completions.jsonl"),
-    "docker.stdout.log": artifactPath(runDir, job.files?.stdout) || join(jobDir, "docker.stdout.log"),
-    "docker.stderr.log": artifactPath(runDir, job.files?.stderr) || join(jobDir, "docker.stderr.log"),
+    "reviewer.stdout.log": artifactPath(runDir, job.files?.stdout) || join(jobDir, "reviewer.stdout.log"),
+    "reviewer.stderr.log": artifactPath(runDir, job.files?.stderr) || join(jobDir, "reviewer.stderr.log"),
   };
   for (const [target, source] of Object.entries(artifacts)) {
     copyExistingFile(source, join(entryDir, target));
@@ -151,9 +145,9 @@ function seedReviewCache({ runDir, run, job, cacheDir, force }) {
     runner: job.runner,
     provider: job.provider,
     model: job.model,
-    // Legacy runs without an image ID remain seedable, but their cache keys
-    // cannot collide with a live capture from an inspected reviewer image.
-    reviewerImageId: run.imageId || null,
+    // Runs without a reviewer identity remain seedable, but their cache keys
+    // cannot collide with a live capture from an identified reviewer.
+    reviewerId: run.reviewerId || null,
     input: job.input,
     context,
     diffText,
@@ -172,7 +166,7 @@ function seedReviewCache({ runDir, run, job, cacheDir, force }) {
     model: job.model,
     runner: job.runner || "src",
     provider: job.runner === "aml" ? job.provider || "opencode" : null,
-    reviewerImageId: run.imageId || null,
+    reviewerId: run.reviewerId || null,
     input: job.input,
     outputBytes: job.outputBytes || statSync(reviewFile).size,
     sourceRun: relative(repoRoot, runDir).split("\\").join("/"),

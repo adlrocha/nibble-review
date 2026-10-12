@@ -1,21 +1,21 @@
-const OPENCODE_CREDENTIAL_ENVIRONMENT = [
-  "ANTHROPIC_API_KEY",
-  "CONTEXT7_API_KEY",
-  "GOOGLE_GENERATIVE_AI_API_KEY",
-  "OPENCODE_API_KEY",
-  "OPENROUTER_API_KEY",
-  "Z_AI_API_KEY"
-]
+import { join } from "node:path"
 
-/** Maps one eval job to the production executable and its credential boundary. */
-export function reviewerContainerConfig(job) {
+/** Model credentials pi may read; mirrors the reviewer's own *_API_KEY forwarding rule. */
+const CREDENTIAL_ENVIRONMENT = /^[A-Z][A-Z0-9_]*_API_KEY$/u
+
+/**
+ * Maps one eval job to the production reviewer CLI. The capture runs the same
+ * dry-run boundary as the GitHub Action, without --publish.
+ */
+export function reviewerProcessConfig(job, { repoRoot, environment = process.env }) {
   return {
-    command: "/usr/local/bin/review_runner",
+    command: process.execPath,
+    args: [join(repoRoot, "dist", "cli", "review.js")],
     environment: {
-      REVIEW_MODEL: job.model
+      REVIEW_MODEL: job.model,
     },
-    inheritedEnvironment: OPENCODE_CREDENTIAL_ENVIRONMENT,
-    requiredEnvironment: [],
-    usesOpenCodeAuth: true
+    inheritedEnvironment: Object.keys(environment)
+      .filter((key) => CREDENTIAL_ENVIRONMENT.test(key) && String(environment[key] || "").trim())
+      .sort(),
   }
 }

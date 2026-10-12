@@ -30,16 +30,6 @@ function normalizeStringArray(value, name) {
   return value;
 }
 
-function optionalString(value, name) {
-  if (value === undefined) {
-    return undefined;
-  }
-  if (typeof value !== "string" || value.trim().length === 0) {
-    throw new Error(`eval config ${name} must be a non-empty string`);
-  }
-  return value.trim();
-}
-
 function normalizeInput(value) {
   if (value === undefined) {
     return [];
@@ -55,7 +45,6 @@ function normalizeConfig(value) {
   const judge = config.judge && typeof config.judge === "object" ? config.judge : {};
   return {
     models: normalizeStringArray(config.models, "models"),
-    baseImage: optionalString(config.baseImage, "baseImage"),
     input: normalizeInput(config.input),
     concurrency: positiveInteger(config.concurrency, "concurrency") ?? 1,
     targetDurationMs: positiveInteger(config.targetDurationMs, "targetDurationMs") ?? 600_000,

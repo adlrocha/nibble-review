@@ -125,6 +125,9 @@ function readOpenCodeUsage(file) {
   return usage;
 }
 
+/** Usage sources whose estimated cost covers every model call of the review. */
+const TRUSTED_USAGE_SOURCES = new Set(["pi-session", "opencode-db"]);
+
 function readReviewStats(file) {
   const stats = readJson(file, null);
   const totals = stats && typeof stats === "object" ? stats.totals || {} : {};
@@ -142,9 +145,10 @@ function readReviewStats(file) {
       reasoningTokens: toNumber(totals.reasoningTokens),
       cacheReadTokens: toNumber(totals.cacheReadTokens),
       cacheWriteTokens: toNumber(totals.cacheWriteTokens),
-      // Review costs come only from recovered database tokens, including for old captures.
+      // Review cost is pi's catalog estimate from its session log; old OpenCode
+      // captures keep their database estimate. ACP-only captures stay n/a.
       costUsd: null,
-      estimatedCostUsd: stats?.usageSource === "opencode-db" && typeof totals.estimatedCostUsd === "number" ? totals.estimatedCostUsd : null,
+      estimatedCostUsd: TRUSTED_USAGE_SOURCES.has(stats?.usageSource) && typeof totals.estimatedCostUsd === "number" ? totals.estimatedCostUsd : null,
     },
   };
 }
@@ -383,13 +387,13 @@ function summarizeResult({ job, judgment, hasJudgments, runDir, maxDurationMs })
   const retainedJudgeAttempts = judgeAttempts(judgment);
   const judgeUsageByAttempt = retainedJudgeAttempts.map(attempt => readOpenCodeUsage(attempt.files?.raw));
   const judgeUsage = combineUsage(...judgeUsageByAttempt);
-  // Keep the per-model DB estimate, or n/a for ACP-only captures. Repricing
+  // Keep the captured estimate, or n/a for ACP-only captures. Repricing
   // fallback tokens would reintroduce the incomplete costs we deliberately exclude.
   const captureCost = reviewStats ? {
     costUsd: captureUsage.estimatedCostUsd,
     label: formatCost(captureUsage.estimatedCostUsd),
     rawReportedCostUsd: 0,
-    source: captureUsage.estimatedCostUsd === null ? "unavailable" : "price-table",
+    source: captureUsage.estimatedCostUsd === null ? "unavailable" : "estimate",
   } : priceUsage({
     model: job.model,
     usage: captureUsage,

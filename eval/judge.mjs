@@ -14,8 +14,7 @@ import { JudgeAttemptStore } from "./lib/judge-attempts.mjs"
 import { buildJudgePrompt } from "./lib/judge-prompt.mjs"
 import { JUDGE_RUBRIC } from "./lib/judge-rubric.mjs"
 import { normalizeEvalModel } from "./lib/models.mjs"
-import { extractRenderedText, cleanupScratch } from "./lib/opencode-runner.mjs"
-import { stageOpenCodeAuth } from "./lib/opencode-auth.mjs"
+import { cleanupScratch, piJudgeCommand } from "./lib/pi-judge.mjs"
 import { evalJobKey } from "./lib/job-key.mjs"
 import { completedJobArtifacts } from "./lib/job-artifacts.mjs"
 
@@ -220,18 +219,7 @@ function runJudge({ model, jobDir, job, timeoutMs, files }) {
   return new Promise((resolveJudge) => {
     const scratchRoot = join(tmpdir(), "nibble-review-eval-judge", `${Date.now()}-${job.input.slug}`)
     const home = join(scratchRoot, "home")
-    const xdgRoot = join(scratchRoot, "xdg")
-    const configHome = join(xdgRoot, "config")
-    const dataHome = join(xdgRoot, "data")
-    const cacheHome = join(xdgRoot, "cache")
-    const stateHome = join(xdgRoot, "state")
     mkdirSync(home, { recursive: true })
-    mkdirSync(configHome, { recursive: true })
-    mkdirSync(dataHome, { recursive: true })
-    mkdirSync(cacheHome, { recursive: true })
-    mkdirSync(stateHome, { recursive: true })
-    writeText(join(configHome, "opencode", "opencode.json"), "{}\n")
-    stageOpenCodeAuth(dataHome)
 
     const rawFile = files.raw
     const stderrFile = files.stderr
@@ -244,49 +232,20 @@ function runJudge({ model, jobDir, job, timeoutMs, files }) {
       join(jobDir, "artifacts", "review_validated.json"),
       join(jobDir, "artifacts", "review_validation_context.json"),
       join(jobDir, "artifacts", "audit_model_context.json"),
-      join(jobDir, "artifacts", "opencode_review.log"),
-      join(jobDir, "artifacts", "opencode_review.log.jsonl"),
-      join(jobDir, "artifacts", "opencode_audit.log"),
-      join(jobDir, "artifacts", "opencode_audit.log.jsonl"),
-      join(jobDir, "artifacts", "opencode_synthesis.log"),
-      join(jobDir, "artifacts", "opencode_synthesis.log.jsonl"),
       join(jobDir, "review.md"),
       join(jobDir, "review_comments.json"),
       join(jobDir, "review_stats.json"),
       join(jobDir, "review_transcript.md"),
     ].filter((file) => existsSync(file))
-    const args = [
-      "run",
-      "--pure",
-      "--model",
-      model,
-      "--format",
-      "json",
-    ]
-    for (const file of attachedFiles) {
-      args.push("--file", file)
-    }
-    args.push("--", prompt)
+    const judge = piJudgeCommand({ repoRoot, model, files: attachedFiles, prompt, home })
     let stdout = ""
     let stderr = ""
     let settled = false
-    const child = spawn("opencode", args, {
-      // Every judge attachment lives under this directory. Keeping it as cwd
-      // lets OpenCode continue reading long files without granting arbitrary
-      // external-directory access to the source checkout or /tmp.
+    // Every judge attachment lives under the job directory; cwd keeps pi's
+    // read tools pointed there rather than at the source checkout.
+    const child = spawn(judge.command, judge.args, {
       cwd: jobDir,
-      env: {
-        ...process.env,
-        HOME: home,
-        XDG_CONFIG_HOME: configHome,
-        XDG_DATA_HOME: dataHome,
-        XDG_CACHE_HOME: cacheHome,
-        XDG_STATE_HOME: stateHome,
-        OPENCODE_MODEL: model,
-        OPENCODE_API_KEY: process.env.OPENCODE_API_KEY || "",
-        OPENCODE_DISABLE_AUTOUPDATE: "true",
-        OPENCODE_DISABLE_CLAUDE_CODE: "1",
-      },
+      env: judge.env,
       stdio: ["ignore", "pipe", "pipe"],
       detached: true,
     })
@@ -326,7 +285,7 @@ function runJudge({ model, jobDir, job, timeoutMs, files }) {
     }
     const timer = setTimeout(() => {
       killGroup("SIGTERM")
-      // OpenCode can leave provider children behind. Bound cleanup so a judge
+      // A provider child can outlive the judge. Bound cleanup so a judge
       // timeout cannot hold the sequential evaluator forever.
       killTimer = setTimeout(() => {
         killGroup("SIGKILL")
@@ -349,7 +308,8 @@ function runJudge({ model, jobDir, job, timeoutMs, files }) {
         finish({ status: "failed", error: `judge exited ${status}` })
         return
       }
-      const rendered = extractRenderedText(stdout)
+      // `pi -p` prints only the final assistant text.
+      const rendered = stdout.trim()
       try {
         finish({ status: "completed", judgment: parseJudgeJson(rendered), error: null })
       } catch (error) {
