@@ -10,8 +10,8 @@ import { DeterministicAgentProvider } from "@aml-jsx/sdk/testing"
 import { createReviewProvider } from "../../dist/lib/review-provider.js"
 import { reviewExitCode } from "../../dist/cli/review.js"
 import { ReviewUnavailableError, runReview } from "../../dist/run-review.js"
-import { ReviewGitHubActions } from "../../dist/services/github-actions.js"
-import { createGitHubClient } from "../../dist/services/github-client.js"
+import { ReviewGitHubActions } from "../../dist/services/github/actions.js"
+import { createGitHubClient } from "../../dist/services/github/client.js"
 import { createGitHubWriteTools } from "../../dist/tools/github-write.js"
 
 const lanes = [
@@ -56,11 +56,29 @@ function githubFixture(overrides = {}) {
       async getPullRequestDiff() {
         return overrides.diff ?? reviewDiff
       },
+      async getIssue(number) {
+        return { number, title: "Referenced issue", body: "" }
+      },
+      async getIssueOrPullRequest(number) {
+        return { number, title: "Referenced issue", body: "" }
+      },
+      async listPullRequestClosingIssues() {
+        return []
+      },
+      async getCommit(ref) {
+        return { sha: ref, commit: { message: "Referenced commit" } }
+      },
       async getIssueComment(commentId) {
         return { id: commentId, body: "@nibble-review what does this do?", user: { login: "author" } }
       },
+      async listPullRequestComments() {
+        return overrides.issueComments ?? []
+      },
       async listIssueComments() {
         return overrides.issueComments ?? []
+      },
+      async listIssueTimeline() {
+        return []
       },
       async listReviewComments() {
         return overrides.reviewComments ?? []
@@ -83,7 +101,7 @@ function githubFixture(overrides = {}) {
       async createIssueCommentReaction(commentId, content) {
         writes.push({ kind: "reaction", commentId, content })
       },
-      async createIssueComment(prNumber, body) {
+      async createPullRequestComment(prNumber, body) {
         writes.push({ kind: "issue-comment", prNumber, body })
       },
       async submitReview(prNumber, headSha, payload) {
@@ -213,7 +231,8 @@ function completeProvider(publisher) {
           structured: {
             direct_answer: null,
             summary: "The change is focused and no actionable issue remains.",
-            next_steps: null
+            since_last_review: null,
+            recommendation: null
           }
         }
       }
@@ -227,7 +246,7 @@ test("review CLI reserves fallback exit status for pre-publication review failur
   assert.equal(reviewExitCode(new Error("publication failed")), 1)
 })
 
-test("runtime materializes only the three Agent-readable review context files", async t => {
+test("runtime materializes only the four Agent-readable review context files", async t => {
   const workspace = fs.mkdtempSync(path.join(os.tmpdir(), "aml-runtime-"))
   t.after(() => fs.rmSync(workspace, { recursive: true, force: true }))
   const github = githubFixture({
@@ -289,7 +308,7 @@ test("runtime materializes only the three Agent-readable review context files", 
   )
   const contextDirectory = path.join(workspace, ".nibble-review")
   assert.deepEqual(fs.readdirSync(workspace), [".nibble-review"])
-  assert.deepEqual(fs.readdirSync(contextDirectory).sort(), ["history.md", "pr.diff", "pr.md"])
+  assert.deepEqual(fs.readdirSync(contextDirectory).sort(), ["history.md", "issues.md", "pr.diff", "pr.md"])
   const pullRequestContext = fs.readFileSync(path.join(contextDirectory, "pr.md"), "utf8")
   assert.match(pullRequestContext, /Review this change\./u)
   assert.match(pullRequestContext, /Keep the review context readable/u)
@@ -309,7 +328,7 @@ test("runtime rejects a checkout that does not match the pull request head befor
   t.after(() => fs.rmSync(workspace, { recursive: true, force: true }))
   const github = githubFixture()
   const base = options(github.client, workspace)
-  let providers = 0
+  let provider = null
 
   await assert.rejects(
     runReview(
@@ -320,16 +339,17 @@ test("runtime rejects a checkout that does not match the pull request head befor
         }
       }),
       () => {
-        providers += 1
-        return completeProvider(() => {
-          throw new Error("mismatched checkouts must stop before provider construction")
+        provider = completeProvider(() => {
+          throw new Error("mismatched checkouts must stop before any Agent session")
         })
+        return provider
       }
     ),
     /checked-out head .* does not match pull request head/u
   )
 
-  assert.equal(providers, 0)
+  // Building the provider is free; no Agent session may start before the snapshot is verified.
+  assert.equal(provider?.calls.length ?? 0, 0)
   assert.deepEqual(github.writes, [])
 })
 
@@ -346,47 +366,54 @@ test("runtime rejects a push during snapshot assembly before starting an Agent",
       headRefOid: reads === 1 ? "2".repeat(40) : "3".repeat(40)
     }
   }
-  let providers = 0
+  let provider = null
 
   await assert.rejects(
     runReview(options(github.client, workspace), () => {
-      providers += 1
-      return completeProvider(() => {
-        throw new Error("a drifting snapshot must stop before provider construction")
+      provider = completeProvider(() => {
+        throw new Error("a drifting snapshot must stop before any Agent session")
       })
+      return provider
     }),
     /pull request head changed during review/u
   )
   assert.equal(reads, 2)
-  assert.equal(providers, 0)
+  // Building the provider is free; no Agent session may start before the snapshot is verified.
+  assert.equal(provider?.calls.length ?? 0, 0)
 })
 
-test("OpenCode provider inherits AML permissions while preserving launch configuration", async t => {
+test("pi provider launches an isolated pi with read-only tools and no GitHub credentials", async t => {
   const workspace = fs.mkdtempSync(path.join(os.tmpdir(), "aml-provider-"))
-  const commandDirectory = fs.mkdtempSync(path.join(os.tmpdir(), "aml-opencode-"))
-  const capture = path.join(workspace, "launch.txt")
-  const command = path.join(commandDirectory, "opencode")
-  const quoteShell = value => `'${value.replaceAll("'", "'\\''")}'`
+  const fakeDirectory = fs.mkdtempSync(path.join(os.tmpdir(), "aml-pi-"))
+  const capture = path.join(fakeDirectory, "launch.jsonl")
+  const fakePi = path.join(fakeDirectory, "pi.mjs")
   fs.writeFileSync(
-    command,
-    `#!/bin/sh
-printf '%s\\n%s\\n%s\\n%s\\n' "$OPENCODE_CONFIG_CONTENT" "$OPENCODE_DISABLE_AUTOUPDATE" "$OPENCODE_DISABLE_PROJECT_CONFIG" "$PWD" > ${quoteShell(capture)}
-sleep 30
+    fakePi,
+    `import { appendFileSync } from "node:fs"
+appendFileSync(${JSON.stringify(capture)}, JSON.stringify({ argv: process.argv.slice(2), env: process.env, cwd: process.cwd() }) + "\\n")
+setTimeout(() => {}, 30_000)
 `
   )
-  fs.chmodSync(command, 0o755)
-  const previousPath = process.env.PATH
-  process.env.PATH = `${commandDirectory}${path.delimiter}${previousPath || ""}`
+  const previous = {
+    GH_TOKEN: process.env.GH_TOKEN,
+    ACTIONS_RUNTIME_TOKEN: process.env.ACTIONS_RUNTIME_TOKEN,
+    OPENCODE_API_KEY: process.env.OPENCODE_API_KEY
+  }
+  Object.assign(process.env, {
+    GH_TOKEN: "ghs_must_not_leak",
+    ACTIONS_RUNTIME_TOKEN: "runtime_must_not_leak",
+    OPENCODE_API_KEY: "model-key"
+  })
   t.after(() => {
-    process.env.PATH = previousPath
-    fs.rmSync(commandDirectory, { recursive: true, force: true })
+    for (const [name, value] of Object.entries(previous)) {
+      if (value === undefined) delete process.env[name]
+      else process.env[name] = value
+    }
+    fs.rmSync(fakeDirectory, { recursive: true, force: true })
     fs.rmSync(workspace, { recursive: true, force: true })
   })
 
-  const provider = createReviewProvider({
-    model: "opencode-go/deepseek-v4-flash",
-    workspace
-  })
+  const provider = createReviewProvider({ model: "opencode-go/deepseek-v4-flash", workspace, piCli: fakePi })
   const controller = new AbortController()
   const run = provider.run(
     {
@@ -408,28 +435,22 @@ sleep 30
       trace: {}
     }
   )
-  setTimeout(() => controller.abort(), 100)
+  for (let waited = 0; !fs.existsSync(capture) && waited < 10_000; waited += 50) {
+    await new Promise(resolve => setTimeout(resolve, 50))
+  }
+  controller.abort()
   await assert.rejects(run)
 
-  const [configText, autoUpdate, projectConfig, launchDirectory] = fs
-    .readFileSync(capture, "utf8")
-    .trimEnd()
-    .split("\n")
-  const config = JSON.parse(configText)
-  assert.equal(config.model, "opencode-go/deepseek-v4-flash")
-  for (const tool of ["bash", "edit", "webfetch", "websearch"]) {
-    assert.equal(config.permission[tool], "deny")
+  const launch = JSON.parse(fs.readFileSync(capture, "utf8").trim().split("\n")[0])
+  for (const flag of ["--no-extensions", "--no-skills", "--no-prompt-templates", "--no-themes", "--no-context-files"]) {
+    assert.ok(launch.argv.includes(flag), flag)
   }
-  assert.deepEqual(config.tools, { task: false })
-  assert.equal(config.agent.aml.permission["*"], "allow")
-  assert.equal(config.agent.aml.tools.task, false)
-  for (const tool of ["bash", "edit", "webfetch", "websearch", "write"]) {
-    assert.equal(config.agent.aml.permission[tool], "deny")
-    assert.equal(config.agent.aml.tools[tool], false)
-  }
-  assert.equal(autoUpdate, "true")
-  assert.equal(projectConfig, "1")
-  assert.equal(launchDirectory, workspace)
+  assert.equal(launch.argv[launch.argv.indexOf("--tools") + 1], "read,grep,find,ls")
+  assert.equal(launch.env.OPENCODE_API_KEY, "model-key")
+  assert.equal(launch.env.GH_TOKEN, undefined)
+  assert.equal(launch.env.ACTIONS_RUNTIME_TOKEN, undefined)
+  assert.equal(launch.env.PI_OFFLINE, "1")
+  assert.equal(fs.realpathSync(launch.cwd), fs.realpathSync(workspace))
 })
 
 test("GitHub client binds a review request to the inspected commit", async t => {
@@ -554,8 +575,8 @@ test("concurrent duplicate Tools share one live GitHub mutation", async () => {
   })
 
   const receipts = await Promise.all([
-    actions.postIssueComment(42, "same prepared answer"),
-    actions.postIssueComment(42, "same prepared answer")
+    actions.postPullRequestComment(42, "same prepared answer"),
+    actions.postPullRequestComment(42, "same prepared answer")
   ])
 
   assert.equal(github.writes.length, 1)

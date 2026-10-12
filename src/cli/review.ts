@@ -31,7 +31,7 @@ Runs the review in memory. GitHub mutations are recorded by default; pass
 
 Options:
   --workspace <path>          checked-out pull request workspace
-  --model <model>             reviewer model (OpenCode default: opencode-go/deepseek-flash)
+  --model <provider/model>    pi reviewer model (default: ${DEFAULT_REVIEW_MODEL})
   --concurrency <number>      maximum parallel AML Agents (default: 6)
   --publish                   allow live GitHub mutations
 `
@@ -54,7 +54,7 @@ function positiveInteger(value: string | undefined, name: string): number {
 }
 
 function model(options: { configured?: string; env: NodeJS.ProcessEnv }): string {
-  const modelEnv = options.env.REVIEW_MODEL || options.env.OPENCODE_MODEL
+  const modelEnv = options.env.REVIEW_MODEL
   const configured = options.configured || modelEnv
   if (configured) {
     return required(configured, "REVIEW_MODEL")

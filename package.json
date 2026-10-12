@@ -11,7 +11,7 @@
   "scripts": {
     "review": "node dist/cli/review.js",
     "build": "bash scripts/build.sh",
-    "test": "npm run build && node --test test/*.test.js",
+    "test": "npm run build && node --test \"test/**/*.test.js\"",
     "eval": "node eval/run.mjs",
     "eval:cache": "node eval/cache.mjs",
     "eval:judge": "node eval/judge.mjs",
@@ -25,7 +25,10 @@
   },
   "dependencies": {
     "@aml-jsx/sdk": "0.8.1",
+    "@earendil-works/pi-coding-agent": "1.1.0",
     "@octokit/rest": "^22.0.0",
+    "pi-acp": "0.0.34",
+    "pi-mcp-adapter": "5.2.0",
     "zod": "4.4.3"
   },
   "devDependencies": {

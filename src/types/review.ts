@@ -137,10 +137,6 @@ type ReviewRunMetadata = {
   durationMs: number
   attempts: ReviewAttempt[]
   usage: ReviewUsage
-  /** Original AML accounting, preserved while OpenCode's ACP usage is incomplete. */
-  amlUsage: ReviewUsage
-  usageSource: "opencode-db" | "aml-acp"
-  usageNote: string
   traceSummaries: readonly TraceSummary[]
   providerCompletions: readonly ReviewProviderCompletion[]
   publication: GitHubActionReceipt[]

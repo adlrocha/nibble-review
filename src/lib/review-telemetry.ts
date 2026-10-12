@@ -1,5 +1,4 @@
 import { createTraceSummaryCollector, type AmlTraceEvent, type TraceSink, type TraceSummary } from "@aml-jsx/sdk"
-import { estimateCostUsd } from "./review-pricing.js"
 
 export type ReviewUsage = {
   agentCalls: number
@@ -9,9 +8,9 @@ export type ReviewUsage = {
   cacheReadTokens: number | null
   cacheWriteTokens: number | null
   totalTokens: number | null
-  /** ACP-reported cost is diagnostic only in amlUsage; the main review result leaves this null. */
+  /** Provider-reported cost, kept only when every Agent turn reported one. */
   costUsd: number | null
-  /** Fixed model rates applied to available tokens; not a reconciled provider bill. */
+  /** pi's catalog-rate cost for the recorded tokens; not a reconciled provider bill. */
   estimatedCostUsd: number | null
 }
 
@@ -242,7 +241,7 @@ export class ReviewTelemetryCollector {
   }
 
   /** ACP usage is optional, so absence remains null instead of becoming zero. */
-  usage(model = ""): ReviewUsage {
+  usage(): ReviewUsage {
     let agentCalls = 0
     let inputTokens: number | null = null
     let outputTokens: number | null = null
@@ -252,7 +251,6 @@ export class ReviewTelemetryCollector {
     let totalTokens: number | null = null
     let costUsd: number | null = null
     let reportedCosts = 0
-    let pricedTurns = 0
 
     for (const summary of this.#completed) {
       agentCalls += summary.agents.turns.count
@@ -268,15 +266,6 @@ export class ReviewTelemetryCollector {
           costUsd = this.#sum(costUsd, usage.costUsd)
           if (typeof usage.costUsd === "number" && Number.isFinite(usage.costUsd) && usage.costUsd >= 0)
             reportedCosts += 1
-          if (
-            [usage.inputTokens, usage.outputTokens].every(
-              value => typeof value === "number" && Number.isFinite(value) && value >= 0
-            ) &&
-            [usage.thoughtTokens, usage.cachedReadTokens, usage.cachedWriteTokens].every(
-              value => value === undefined || (typeof value === "number" && Number.isFinite(value) && value >= 0)
-            )
-          )
-            pricedTurns += 1
         } catch {
           // Provider telemetry must never decide whether a valid review completes.
         }
@@ -285,16 +274,6 @@ export class ReviewTelemetryCollector {
 
     // A reported subtotal must not appear to be the cost of the whole review.
     if (reportedCosts !== agentCalls) costUsd = null
-    let estimatedCostUsd: number | null = null
-    if (agentCalls > 0 && pricedTurns === agentCalls) {
-      estimatedCostUsd = estimateCostUsd(model, {
-        inputTokens,
-        outputTokens,
-        reasoningTokens,
-        cacheReadTokens,
-        cacheWriteTokens
-      })
-    }
 
     return {
       agentCalls,
@@ -305,7 +284,8 @@ export class ReviewTelemetryCollector {
       cacheWriteTokens,
       totalTokens,
       costUsd,
-      estimatedCostUsd
+      // Filled from pi's session log by the runner; ACP carries no cost.
+      estimatedCostUsd: null
     }
   }
 }

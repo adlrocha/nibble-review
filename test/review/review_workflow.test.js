@@ -200,7 +200,7 @@ function reviewOptions(t, github, overrides = {}) {
     },
     github,
     actionMode: "dry-run",
-    provider: "opencode",
+    provider: "pi",
     model: "opencode-go/deepseek-v4-flash",
     maximumConcurrency: 6,
     ...runtimeOverrides
@@ -415,16 +415,17 @@ test("the declarative tree carries Tool findings through audit, finalization, sy
       "code-path-bug-hunter": "The stale-state branch remains reachable and was queued for audit."
     }
   })
-  let usageDirectory
+  let sessionDirectory
   const result = await runReview(reviewOptions(t, github.client), options => {
-    usageDirectory = options.usageDirectory
-    assert.equal(fs.existsSync(usageDirectory), true)
+    sessionDirectory = options.sessionDirectory
+    assert.equal(fs.existsSync(sessionDirectory), true)
     return provider
   })
 
-  assert.equal(fs.existsSync(usageDirectory), false)
-  assert.equal(result.usageSource, "aml-acp")
-  assert.deepEqual(result.usage, { ...result.amlUsage, costUsd: null, estimatedCostUsd: null })
+  // The pi session log is read for usage and then removed with the run.
+  assert.equal(fs.existsSync(sessionDirectory), false)
+  assert.equal(result.provider, "pi")
+  assert.equal(result.usage.estimatedCostUsd, null)
 
   assert.equal(result.status, "reviewed")
   assert.deepEqual(
@@ -1320,17 +1321,16 @@ test("an audit failure is terminal and never falls back to unaudited lane findin
   const github = fakeGitHub()
   const provider = reviewProvider({ auditFailure: true })
 
-  let usageDirectory
+  let sessionDirectory
   await assert.rejects(
     runReview(reviewOptions(t, github.client), options => {
-      usageDirectory = options.usageDirectory
+      sessionDirectory = options.sessionDirectory
       return provider
     }),
     error => {
       assert.match(error.message, /audit unavailable/u)
-      assert.equal(error.accounting.usageSource, "aml-acp")
-      assert.deepEqual(error.accounting.usage, { ...error.accounting.amlUsage, costUsd: null, estimatedCostUsd: null })
-      assert.equal(fs.existsSync(usageDirectory), false)
+      assert.equal(error.usage.estimatedCostUsd, null)
+      assert.equal(fs.existsSync(sessionDirectory), false)
       return true
     }
   )

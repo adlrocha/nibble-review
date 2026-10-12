@@ -50,20 +50,19 @@ export function renderGitHubStepSummary(result: ReviewRunResult): string {
 | Gate decision | ${result.gate.decision} |
 | Duration | ${formatDuration(result.durationMs)} |
 | Agent turns | ${formatNumber(result.usage.agentCalls)} |
-| Usage source | ${result.usageSource || "aml-acp"} |
 | Input tokens | ${formatNumber(result.usage.inputTokens)} |
 | Output tokens | ${formatNumber(result.usage.outputTokens)} |
 | Reasoning tokens | ${formatNumber(result.usage.reasoningTokens)} |
 | Cache read tokens | ${formatNumber(result.usage.cacheReadTokens)} |
 | Cache write tokens | ${formatNumber(result.usage.cacheWriteTokens)} |
 | Total tokens | ${formatNumber(result.usage.totalTokens)} |
-| Estimated cost | ${formatCost(result.usageSource === "opencode-db" ? result.usage.estimatedCostUsd : null)} |
+| Estimated cost | ${formatCost(result.usage.estimatedCostUsd)} |
 | Inline comments | ${comments.inlineComments} |
 | Replies | ${comments.replies} |
 | Dropped comments | ${comments.dropped} |
 | Publication | ${result.publicationStatus} (${publicationOperations} submitted operations) |
 
-${result.usageNote || "OpenCode may omit intermediate model calls from ACP-reported tokens; this is not a reconciled Go bill."} Estimates use fixed [model prices](https://github.com/we-are-singular/singular-code-review-agent/blob/main/src/model-prices.json).
+Token counts and cost come from pi's session log; cost uses pi's model catalog rates and is not a reconciled provider bill.
 
 ## AML Evaluations
 

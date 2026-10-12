@@ -15,7 +15,7 @@ import { ReviewRouter } from "./components/phases/review-router.js"
 import { ReviewSynthesis } from "./components/phases/review-synthesis.js"
 
 /** The complete review workflow, including its deterministic publication edge. */
-export const Review: AML.Component<{ collectUsage?: () => void }> = ({ collectUsage }) => {
+export const Review: AML.Component = () => {
   const { github } = useReviewContext()
   const workspaceId = `${github.request.repository.replaceAll("/", "-")}-pr-${github.request.prNumber}`
 
@@ -38,13 +38,6 @@ export const Review: AML.Component<{ collectUsage?: () => void }> = ({ collectUs
         </ReviewSynthesis>
       </ReviewRouter>
       <ReviewPublication />
-      <ReviewUsageCollection collect={collectUsage} />
     </Workspace>
   )
-}
-
-/** Final deterministic step: all routed Agents and their provider cleanup have finished. */
-const ReviewUsageCollection: AML.Component<{ collect?: () => void }> = ({ collect }) => {
-  collect?.()
-  return null
 }

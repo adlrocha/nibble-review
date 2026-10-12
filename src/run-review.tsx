@@ -1,13 +1,17 @@
+import { mkdtempSync, rmSync } from "node:fs"
+import { tmpdir } from "node:os"
+import { join } from "node:path"
 import { fileURLToPath } from "node:url"
 
 import { AmlRuntime, localWorkspace, ParallelError } from "@aml-jsx/sdk"
 
 import { createReviewContextEnvironment, ReviewContextProvider } from "./components/context/review-context.js"
+import { quarantineProjectPiConfig } from "./lib/project-pi-config.js"
+import { readPiUsage, withPiUsage } from "./lib/pi-usage.js"
 import { createReviewProvider } from "./lib/review-provider.js"
-import { OpenCodeUsage } from "./lib/opencode-usage.js"
 import type { PublishedReview, ReviewAttempt, ReviewRequest, ReviewRunResult } from "./types/review.js"
 import { REVIEW_LANE_NAMES } from "./lib/review-queue.js"
-import { ReviewTelemetryCollector } from "./lib/review-telemetry.js"
+import { ReviewTelemetryCollector, type ReviewUsage } from "./lib/review-telemetry.js"
 import { Review } from "./review.js"
 import type { GitHubActionMode } from "./services/github/actions.js"
 import type { GitHubClient } from "./services/github/client.js"
@@ -23,13 +27,13 @@ export type ReviewRuntimeOptions = {
   signal?: AbortSignal
 }
 
-const REVIEW_PROVIDER = "opencode"
+const REVIEW_PROVIDER = "pi"
 
 /** Signals that no publishable review exists, so an outer model fallback may start safely. */
 export class ReviewUnavailableError extends Error {
   override readonly name = "ReviewUnavailableError"
   /** Preserves this failed attempt's accounting for callers, without claiming a publishable result. */
-  accounting?: ReturnType<OpenCodeUsage["apply"]>
+  usage?: ReviewUsage
 }
 
 /** Preserves provider causes and names failed parallel lanes at the CLI boundary. */
@@ -71,13 +75,13 @@ export async function runReview(
   const attempts: ReviewAttempt[] = []
   const startedAt = new Date().toISOString()
   let selected: { review: PublishedReview; publicationError: string | null } | null = null
-  const opencodeUsage = new OpenCodeUsage()
-  const collectUsage = () => opencodeUsage.collect(telemetry.sessionIds())
+  const restoreProjectPiConfig = quarantineProjectPiConfig(options.request.workspace)
+  const sessionDirectory = mkdtempSync(join(tmpdir(), "nibble-review-pi-sessions-"))
   try {
     const provider = createProvider({
       model: options.model,
       workspace: options.request.workspace,
-      usageDirectory: opencodeUsage.directory
+      sessionDirectory
     })
     const runtime = new AmlRuntime({
       agentProvider: provider,
@@ -96,7 +100,7 @@ export async function runReview(
     })
     await runtime.evaluate(
       <ReviewContextProvider environment={environment}>
-        <Review collectUsage={collectUsage} />
+        <Review />
       </ReviewContextProvider>,
       { signal }
     )
@@ -121,18 +125,16 @@ export async function runReview(
       error: errorMessage(error)
     })
   } finally {
-    // Failed/cancelled evaluations skip later tree siblings. Their settled steps
-    // still need collection, before our retained databases are removed.
-    collectUsage()
-    opencodeUsage.close()
+    restoreProjectPiConfig()
   }
 
-  const accounting = opencodeUsage.apply(telemetry.usage(options.model))
+  const usage = withPiUsage(telemetry.usage(), readPiUsage(sessionDirectory))
+  rmSync(sessionDirectory, { recursive: true, force: true })
 
   if (!selected) {
     const failures = attempts.map(attempt => `attempt ${attempt.number}: ${attempt.error}`).join("; ")
     const error = new ReviewUnavailableError(`review unsuccessful: ${failures}`)
-    error.accounting = accounting
+    error.usage = usage
     throw error
   }
 
@@ -145,7 +147,7 @@ export async function runReview(
     model: options.model,
     attempts,
     durationMs: Date.now() - started,
-    ...accounting,
+    usage,
     traceSummaries: telemetry.summaries(),
     providerCompletions: telemetry.providerCompletions(),
     publication: environment.actions.receipts(),

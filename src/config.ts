@@ -1,5 +1,5 @@
-/** Model used when neither the CLI nor the environment selects one. */
-export const DEFAULT_REVIEW_MODEL = "opencode-go/deepseek-flash"
+/** pi model (`provider/model`) used when neither the CLI nor the environment selects one. */
+export const DEFAULT_REVIEW_MODEL = "opencode-go/deepseek-v4-flash"
 
 /** Matches the six specialist review lanes that AML evaluates in parallel. */
 export const DEFAULT_REVIEW_CONCURRENCY = 6
