@@ -134,3 +134,11 @@ test("the fix action mints the App token after the sandbox stops and only publis
     .map(([name]) => name)
   assert.deepEqual(tokenUsers, ["Publish fix"])
 })
+
+test("neither action asks setup-node to cache files outside the caller's workspace", () => {
+  // setup-node only resolves cache-dependency-path inside GITHUB_WORKSPACE; the action's
+  // own lockfile lives in the action path, so caching it fails the job before review.
+  for (const yaml of [action, fixAction]) {
+    assert.doesNotMatch(yaml, /cache-dependency-path/u)
+  }
+})
