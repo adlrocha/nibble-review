@@ -521,7 +521,7 @@ test("the declarative tree carries Tool findings through audit, finalization, sy
   for (const call of laneCalls) {
     assert.deepEqual(
       call.request.mcpServers.map(server => server.definition.name),
-      ["context7"]
+      []
     )
   }
 

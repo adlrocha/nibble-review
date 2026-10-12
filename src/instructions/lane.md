@@ -35,12 +35,10 @@ Account for every closing issue supplied in the review context and each current 
 
 - Read the filtered diff first, then the complete changed files and the smallest useful set of callers, consumers, tests, and local documentation.
 - Trace important values across boundaries: input, validation, mutation, persistence, serialization, authorization, and downstream use.
-- Use provider-native file search and reads plus the declared GitHub or documentation Tools when they materially resolve uncertainty.
+- Use provider-native file search and reads plus the declared GitHub Tools when they materially resolve uncertainty.
 - Treat the checkout and model-controlled GitHub operations as read-only.
 - Judge the patch against repository-local architecture and naming before suggesting a new abstraction.
 - Stay within the assigned lane. Follow adjacent behavior only as far as its evidence requires, then leave findings owned by another lane to that specialist.
-
-`Context7` is available when a conclusion depends on current external library or platform semantics. Use it to settle material uncertainty, not as a mandatory search step.
 
 The read-only GitHub Tools provide compact structured PR, issue, comment, commit, and diff evidence through the request cache. Use them when structured reinspection or a referenced GitHub entity helps the investigation. The materialized `.nibble-review` files remain available through provider-native file reads when you need to consult the exact review snapshot.
 

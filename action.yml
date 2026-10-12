@@ -1,0 +1,166 @@
+name: Nibble Review
+description: AI pull-request reviewer. Six specialist reviewers, an evidence audit, and one GitHub review, powered by pi.
+author: adlrocha
+branding:
+  icon: eye
+  color: purple
+
+inputs:
+  api-key:
+    description: API key for the model provider. Store it as a secret.
+    required: true
+  api-key-env:
+    description: Variable pi reads the key from, ending in _API_KEY (OPENCODE_API_KEY, ANTHROPIC_API_KEY, OPENAI_API_KEY, ...).
+    required: false
+    default: OPENCODE_API_KEY
+  model:
+    description: pi model as provider/model.
+    required: false
+    default: opencode-go/deepseek-v4-flash
+  fallback-model:
+    description: Model retried once when the primary model fails before anything is published. Empty disables the retry.
+    required: false
+    default: opencode-go/minimax-m3
+  github-token:
+    description: Token used to read the pull request and publish the review. Reviews post as github-actions[bot].
+    required: false
+    default: ${{ github.token }}
+  app-client-id:
+    description: Optional GitHub App client ID. With app-private-key, reviews post as that App's bot instead.
+    required: false
+    default: ""
+  app-private-key:
+    description: Optional GitHub App private key (PEM). Store it as a secret.
+    required: false
+    default: ""
+  command:
+    description: Mention that requests a review in a pull-request comment.
+    required: false
+    default: "@nibble-review"
+  pr-number:
+    description: Pull request to review. Defaults to the triggering pull request or issue comment.
+    required: false
+    default: ${{ github.event.pull_request.number || github.event.issue.number || github.event.inputs.pr_number }}
+  trigger-comment-id:
+    description: Issue comment that requested the review. Defaults to the triggering comment.
+    required: false
+    default: ${{ github.event.comment.id }}
+  install-dependencies:
+    description: Install the reviewed repository's npm/pnpm/yarn dependencies before reviewing (runs their install scripts).
+    required: false
+    default: "false"
+  emojis:
+    description: Prefix inline comments with severity emojis.
+    required: false
+    default: "true"
+  timeout-minutes:
+    description: Upper bound for each review attempt.
+    required: false
+    default: "20"
+
+outputs:
+  should-review:
+    description: Whether preflight accepted this event.
+    value: ${{ steps.preflight.outputs.should_review }}
+  reason:
+    description: Why preflight accepted or skipped this event.
+    value: ${{ steps.preflight.outputs.reason }}
+
+runs:
+  using: composite
+  steps:
+    - name: Validate inputs
+      shell: bash
+      env:
+        API_KEY: ${{ inputs.api-key }}
+        API_KEY_ENV: ${{ inputs.api-key-env }}
+        PR_NUMBER: ${{ inputs.pr-number }}
+        TIMEOUT_MINUTES: ${{ inputs.timeout-minutes }}
+      run: |
+        fail() { echo "::error title=Nibble Review::$1"; exit 1; }
+        [[ -n "$API_KEY" ]] || fail "api-key is empty. Add the provider key as a repository secret and pass it to the action."
+        [[ "$API_KEY_ENV" =~ ^[A-Z][A-Z0-9_]*_API_KEY$ ]] || fail "api-key-env must be an uppercase variable ending in _API_KEY, such as OPENCODE_API_KEY."
+        [[ "$PR_NUMBER" =~ ^[1-9][0-9]*$ ]] || fail "no pull request number. Trigger on pull_request or issue_comment, or pass pr-number."
+        [[ "$TIMEOUT_MINUTES" =~ ^[1-9][0-9]*$ ]] || fail "timeout-minutes must be a positive integer."
+
+    - name: Set up Node.js
+      uses: actions/setup-node@v7
+      with:
+        node-version: 26
+        cache: npm
+        cache-dependency-path: ${{ github.action_path }}/package-lock.json
+
+    - name: Install reviewer
+      shell: bash
+      working-directory: ${{ github.action_path }}
+      env:
+        HUSKY: "0"
+      run: |
+        npm ci --ignore-scripts --no-audit --no-fund
+        npm run build
+
+    - name: Run review preflight
+      id: preflight
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.github-token }}
+        PR_NUMBER: ${{ inputs.pr-number }}
+        TRIGGER_COMMENT_ID: ${{ inputs.trigger-comment-id }}
+        REVIEW_COMMAND: ${{ inputs.command }}
+      run: |
+        for attempt in 1 2; do
+          if node "$GITHUB_ACTION_PATH/dist/cli/preflight.js"; then
+            exit 0
+          else
+            status=$?
+          fi
+          echo "::warning::review preflight attempt ${attempt}/2 failed with status ${status}"
+          [[ "$attempt" -eq 2 ]] && exit "$status"
+        done
+
+    - name: Create GitHub App token
+      id: app-token
+      if: steps.preflight.outputs.should_review == 'true' && inputs.app-client-id != ''
+      uses: actions/create-github-app-token@v3
+      with:
+        client-id: ${{ inputs.app-client-id }}
+        private-key: ${{ inputs.app-private-key }}
+        permission-contents: read
+        permission-issues: write
+        permission-pull-requests: write
+
+    - name: Check out pull request
+      if: steps.preflight.outputs.should_review == 'true'
+      uses: actions/checkout@v7
+      with:
+        ref: refs/pull/${{ inputs.pr-number }}/head
+        fetch-depth: 0
+        token: ${{ steps.app-token.outputs.token || inputs.github-token }}
+        persist-credentials: false
+
+    - name: Install repository dependencies
+      if: steps.preflight.outputs.should_review == 'true' && inputs.install-dependencies == 'true'
+      shell: bash
+      env:
+        NIBBLE_REVIEW_INSTALL_DEPS: "true"
+      run: bash "$GITHUB_ACTION_PATH/bin/provision.sh"
+
+    - name: Review pull request
+      if: steps.preflight.outputs.should_review == 'true'
+      shell: bash
+      env:
+        GH_TOKEN: ${{ steps.app-token.outputs.token || inputs.github-token }}
+        REVIEW_BOT_LOGIN: ${{ steps.app-token.outputs.app-slug && format('{0}[bot]', steps.app-token.outputs.app-slug) || 'github-actions[bot]' }}
+        REVIEW_COMMAND: ${{ inputs.command }}
+        REVIEW_MODEL: ${{ inputs.model }}
+        REVIEW_FALLBACK_MODEL: ${{ inputs.fallback-model }}
+        REVIEW_EMOJIS: ${{ inputs.emojis }}
+        PR_NUMBER: ${{ inputs.pr-number }}
+        TRIGGER_COMMENT_ID: ${{ inputs.trigger-comment-id }}
+        API_KEY: ${{ inputs.api-key }}
+        API_KEY_ENV: ${{ inputs.api-key-env }}
+        TIMEOUT_MINUTES: ${{ inputs.timeout-minutes }}
+      run: |
+        export "$API_KEY_ENV=$API_KEY"
+        unset API_KEY
+        bash "$GITHUB_ACTION_PATH/bin/review-with-fallback.sh"

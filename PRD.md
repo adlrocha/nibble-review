@@ -2,14 +2,14 @@
 
 ## Purpose
 
-Nibble Review provides actionable, evidence-backed pull-request review with the consistency of a managed application and the repository awareness of a coding agent. The current repository owns the review engine, image, reusable GitHub Actions workflow, and evaluation harness. Account, subscription, and repository-management surfaces are future control-plane work.
+Nibble Review provides actionable, evidence-backed pull-request review with the consistency of a managed application and the repository awareness of a coding agent. The current repository owns the review engine, its composite GitHub Action, and the evaluation harness. Account, subscription, and repository-management surfaces are future control-plane work.
 
 ## Product goals
 
 - Find material correctness, intent, architecture, testing, documentation, and maintainability issues without manufacturing feedback.
 - Produce concise author-ready inline comments and a non-repetitive main review body.
 - Keep ordinary reviews fast enough for interactive pull-request work and make contained follow-up pushes substantially cheaper.
-- Support OpenCode in production while keeping the AML workflow portable to other ACP providers.
+- Run on pi in production, so any model pi supports works, while keeping the AML workflow portable to other ACP providers.
 - Make the complete model workflow understandable from one declarative JSX blueprint.
 - Keep side effects, validation, trust checks, and publication deterministic.
 
@@ -93,13 +93,13 @@ The workflow's 40-minute process ceiling is a stuck-provider safety boundary, no
 - Preflight rejects fork heads, untrusted or bot triggers, missing resources, and explicit skip directives before App-token creation and checkout.
 - The workflow uses pull_request and issue_comment, never pull_request_target.
 - Target dependency installation is opt-in and assumes trusted contributors.
-- Agents receive a read-only filesystem, no native shell, no native network, staged-finding Tools, focused read-only GitHub reference Tools, and the explicit Context7 MCP. Snapshot reads and publication remain application-owned.
+- Agents receive a read-only filesystem, no native shell, no native network, staged-finding Tools, and focused read-only GitHub reference Tools. Snapshot reads and publication remain application-owned.
 
 ## Operations and evaluation
 
-Production uses OpenCode with opencode-go/deepseek-flash by default and opencode-go/deepseek-v4-flash as its fallback. The model and maximum Agent concurrency are selected once at the runtime edge.
+Production uses pi with opencode-go/deepseek-v4-flash by default and opencode-go/minimax-m3 as its fallback. pi runs with project resources disabled and an allowlisted environment. The model and maximum Agent concurrency are selected once at the runtime edge.
 
-Every eval capture preserves the raw typed result, provider/model identity, immutable image identity, exact PR revisions, judge views, timing, usage, and completion state. Exit zero alone is insufficient; required artifacts and a complete typed review must exist before judgment or cache promotion.
+Every eval capture preserves the raw typed result, provider/model identity, immutable reviewer revision, exact PR revisions, judge views, timing, usage, and completion state. Exit zero alone is insufficient; required artifacts and a complete typed review must exist before judgment or cache promotion.
 
 ## Managed-service acceptance criteria
 
@@ -111,5 +111,5 @@ The future hosted product must add, without weakening the engine contract:
 - durable job leases, retries, cancellation, and concurrency;
 - auditable traces and result retention;
 - usage accounting and plan enforcement;
-- image/version rollout with rollback;
+- versioned Action rollout with rollback;
 - a clear boundary between control-plane state and isolated review execution.

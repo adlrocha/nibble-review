@@ -1,20 +1,26 @@
 # Nibble Review
 
-> [!NOTE] This is [@adlrocha](https://github.com/adlrocha)'s fork of [we-are-singular/singular-code-review-agent](https://github.com/we-are-singular/singular-code-review-agent), fully rebranded to **nibble-review** and parameterized so any GitHub App identity can run it (custom mention command, App client ID, and image via repository variables). To run it on your own repositories, follow [docs/SETUP.md](docs/SETUP.md) or ask the setup skill: `scripts/setup-review-bot.sh --help`.
+An AI pull-request reviewer you add to any repository with one workflow file and one secret. It reads the code around a diff, gives the change to six focused reviewers, audits their findings, and publishes one GitHub review.
 
-Nibble Review is the pull-request reviewer we run on our own repositories at [Singular](https://github.com/we-are-singular). It reads the code around a diff, gives the change to six focused reviewers, audits their findings, and publishes one GitHub review.
+It runs entirely inside your GitHub Actions job: no GitHub App, no container image, no server. Agents run through [pi](https://pi.dev), so any model pi supports works, and the default ([OpenCode Go](https://opencode.ai/docs/go/) DeepSeek V4 Flash) costs about **$0.10 per full review**.
 
-The reviewer is written with [Agent Markup Language (AML)](https://agent-markup-language.com/). The review tree is declarative; TypeScript owns the GitHub snapshot, finding queue, validation, verdict, and publication.
+```yaml
+- uses: adlrocha/nibble-review@v1
+  with:
+    api-key: ${{ secrets.OPENCODE_API_KEY }}
+```
 
-> [!IMPORTANT]
->
-> Singular operates the deployed GitHub App privately. Its private key is not shared. To run this reviewer outside Singular, fork the repository, create your own GitHub App, publish your own image, and point your repositories at your fork.
+The reviewer is written with [Agent Markup Language (AML)](https://agent-markup-language.com/). The review tree is declarative; TypeScript owns the GitHub snapshot, finding queue, validation, verdict, and publication. It started as a fork of [we-are-singular/singular-code-review-agent](https://github.com/we-are-singular/singular-code-review-agent) and now evolves independently.
 
-## Why we built it
+## Quick start
 
-At Singular, this is our alternative to adding another paid code-review service or coding assistant to every repository. Reviews run on our own hardware and GitHub runners, and we can move between free and inexpensive models without changing the review contract. It has already saved us thousands of euros in reviewer costs.
+1. Add your model provider key as a repository (or organization) secret, for example `OPENCODE_API_KEY`.
+2. Copy [examples/nibble-review.yml](examples/nibble-review.yml) to `.github/workflows/nibble-review.yml`.
+3. Open a pull request, or comment `@nibble-review` on one.
 
-We are building the engine in public so anyone can inspect the review policy, model boundaries, GitHub safety checks, and evals used to change them. The eventual goal is a hosted product where someone installs an App, chooses a repository, and does not operate the reviewer themselves. The control plane is still future work; its scope lives in [Future Work](FUTURE.md).
+That's it. Reviews post as `github-actions[bot]` using the job's own `GITHUB_TOKEN`; the workflow's `permissions` block grants exactly `contents: read`, `issues: write`, and `pull-requests: write`.
+
+The example triggers on opened, ready-for-review, and updated pull requests from the same repository, on manual dispatch, and on `@nibble-review` comments from owners, members, and collaborators. Start a PR title with `[skip]`, or put `@nibble-review skip` on its own line in the PR body, to skip a review.
 
 ## What a review produces
 
@@ -32,7 +38,7 @@ Follow-up events do not always need another full review. The gate can answer a d
 ```mermaid
 flowchart TB
     event["PR event, workflow dispatch,<br/>or trusted @mention"] --> preflight{"Preflight"}
-    preflight -->|Reject| stop["Stop before App token,<br/>checkout, or model call"]
+    preflight -->|Reject| stop["Stop before checkout<br/>or any model call"]
     preflight -->|Accept| snapshot["Freeze the PR head and gather<br/>one GitHub snapshot"]
 
     subgraph review["src/review.tsx"]
@@ -87,7 +93,7 @@ AML reads the model tree from the leaves back to the trunk. The nesting defines 
 
 The shared review Context carries request-scoped dependencies plus small APIs for the typed queue, completed routing handoff, and final publication outcome. Its top-level value is not reactive state: components share the same request binding, and mutable workflow transitions remain behind the owning APIs. Audited and validated snapshots are derived from the queue where they are consumed instead of being copied into phase-owned Context fields.
 
-The [AML source is on GitHub](https://github.com/we-are-singular/aml). Its `Agent`, `Block`, `File`, `Include`, `Parallel`, `Tool`, and `Workspace` components describe the model-facing work without taking ownership of trusted application state.
+The [AML source is on GitHub](https://github.com/we-are-singular/aml); this reviewer runs its Agents through AML's [pi](https://pi.dev) provider. Its `Agent`, `Block`, `File`, `Include`, `Parallel`, `Tool`, and `Workspace` components describe the model-facing work without taking ownership of trusted application state.
 
 ### The six lanes
 
@@ -100,7 +106,7 @@ The [AML source is on GitHub](https://github.com/we-are-singular/aml). Its `Agen
 | Documentation and commentary | Do active docs, examples, release guidance, and non-obvious comments still tell the truth? |
 | Maintainability and elegance | Is the change locally clear, well placed, and free of needless concepts or indirection? |
 
-Each lane can read the checkout and the same frozen PR evidence. Native shell and network access are disabled. Context7 and narrow read-only GitHub tools are available when the change depends on external documentation or linked GitHub evidence. Findings reach the author only through typed review tools.
+Each lane can read the checkout and the same frozen PR evidence through pi's read-only `read`, `grep`, `find`, and `ls` tools. Shell and network access are disabled. Narrow read-only GitHub tools are available when the change depends on linked GitHub evidence. Findings reach the author only through typed review tools.
 
 The snapshot includes GitHub closing issues and explicit `related to` or `relates to` references to issues and pull requests. References accept local numbers, `owner/repository#number`, and GitHub issue or PR URLs. Related PRs supply their descriptions, files, commits, and discussion history; gathering stops after one hop. The `get_pr` Tool returns nested PR inventories as name-only `changedFiles` and `ignoredFiles` arrays; `get_pr_diff` supplies their patches when needed. Related references load in bounded batches that retain every reference. Closing issues define claimed requirements, while related issues and PRs provide context. Publication rechecks referenced issue timestamps and related PR timestamps and heads.
 
@@ -117,142 +123,80 @@ The snapshot includes GitHub closing issues and explicit `related to` or `relate
 
 Models investigate and write. They do not decide which commit was reviewed, whether a comment can be posted, what verdict a severity produces, or whether a GitHub mutation should be retried.
 
-## Run it
-
-### Use it locally before pushing
-
-You do not need to deploy the GitHub App to use the review policy while you work. The [nibble-review skill](https://www.skills.sh/we-are-singular/skills/nibble-review) packages the same review guidelines and checks into a `SKILL.md`, so a skill-compatible coding agent can inspect the local diff before it reaches the repository.
-
-```bash
-npx skills add https://github.com/we-are-singular/skills --skill nibble-review
-```
-
-Use the skill "at home" to catch problems before pushing; the GitHub App handles the full pull-request review and publication pipeline.
-
-### Inside Singular
-
-Repositories that can use the Singular-owned App need the App installed plus these Actions secrets:
-
-- `NIBBLE_REVIEW_PRIVATE_KEY` for the App;
-- `OPENCODE_API_KEY` for the production model;
-- `CONTEXT7_API_KEY` when higher Context7 limits are needed.
-
-Copy [examples/nibble-review.yml](examples/nibble-review.yml) into the target repository under `.github/workflows/`. The workflow handles opened PRs, ready-for-review drafts, new heads, manual dispatches, and `@nibble-review` comments from repository owners, organization members, and collaborators.
-
-### Fork it and make it yours
-
-1. Fork this repository.
-2. Create a GitHub App with `Contents: read`, `Issues: write`, and `Pull requests: write`, then install it on the repositories you want reviewed.
-3. Update the App client ID and container image in [.github/workflows/review.yml](.github/workflows/review.yml). The image should point at your fork's GHCR package.
-4. Update the reusable-workflow owner in [examples/nibble-review.yml](examples/nibble-review.yml) from `we-are-singular` to your GitHub owner.
-5. If you rename the bot, change the mention and default bot login in [src/services/review-evidence.ts](src/services/review-evidence.ts), then update the example workflow trigger.
-6. Push to your fork's `main` branch to publish `ghcr.io/YOUR_OWNER/YOUR_REPOSITORY:latest`.
-7. Store your App private key and model credentials as repository or organization secrets in each consuming repository, then copy your edited trigger workflow there.
-
-The consuming repository receives a short-lived installation token during each run. It does not receive a long-lived GitHub token. You own the App, private key, image, model account, runner capacity, and any changes to the review policy.
-
 ## Configuration
 
-The reusable workflow accepts:
+| Input | Default | Purpose |
+| --- | --- | --- |
+| `api-key` | required | Model provider key. Pass it from a secret. |
+| `api-key-env` | `OPENCODE_API_KEY` | Variable pi reads the key from, e.g. `ANTHROPIC_API_KEY` or `OPENAI_API_KEY`. Must end in `_API_KEY`. |
+| `model` | `opencode-go/deepseek-v4-flash` | pi model as `provider/model`. Run `pi --list-models` to see what is available. |
+| `fallback-model` | `opencode-go/minimax-m3` | Retried once when the primary model fails before anything is published. Empty disables the retry. |
+| `github-token` | `${{ github.token }}` | Token used to read the PR and publish the review. |
+| `app-client-id`, `app-private-key` | empty | Optional GitHub App credentials; reviews then post as the App's bot. |
+| `command` | `@nibble-review` | Mention that requests a review in a PR comment. |
+| `pr-number` | from the event | Pull request to review. |
+| `install-dependencies` | `false` | Install the repository's npm/pnpm/yarn dependencies first. Runs their install scripts. |
+| `emojis` | `true` | Prefix inline comments with severity emojis. |
+| `timeout-minutes` | `20` | Upper bound for each review attempt. |
 
-| Input                | Default         | Purpose                                              |
-| -------------------- | --------------- | ---------------------------------------------------- |
-| `pr_number`          | required        | Pull request to review                               |
-| `trigger_comment_id` | empty           | Trusted comment that requested the run               |
-| `runner`             | `ubuntu-latest` | GitHub Actions runner label                          |
-| `npm_install`        | `false`         | Install target-repository dependencies before review |
+Use another provider by changing two inputs:
 
-Set the repository variable `REVIEW_MODEL` to override `opencode-go/deepseek-flash`. The older `OPENCODE_MODEL` variable remains compatible.
+```yaml
+- uses: adlrocha/nibble-review@v1
+  with:
+    api-key: ${{ secrets.ANTHROPIC_API_KEY }}
+    api-key-env: ANTHROPIC_API_KEY
+    model: anthropic/claude-haiku-5-5
+    fallback-model: ""
+```
 
-If the primary model fails before producing a publishable review, the workflow retries once with `opencode-go/deepseek-v4-flash`. Each attempt has a 20-minute limit. Set `REVIEW_FALLBACK_MODEL` to override the fallback; the older `OPENCODE_MODEL_FALLBACK` variable remains compatible. Publication failures and timeouts do not trigger the fallback because their GitHub mutation outcome may be ambiguous.
+If you change `command`, change the mention in your workflow's `if:` filter to match.
 
-Inline severity labels include emoji by default. Set the repository variable `REVIEW_EMOJIS` to `false` to render plain severity labels instead.
-
-The runner writes concise review progress to standard error while keeping its complete JSON result on standard output. Progress includes the main review components, Agent turn boundaries, durations, and each completed turn's response. It excludes framework plumbing, trace identities, prompts, streamed reasoning, and usage payloads. In GitHub Actions, the completed result also produces a job summary with model, turns, available token usage, review counts, and publication status.
-
-Dependency installation is opt-in because package scripts run with the review job's credentials available. Enable it only for trusted repositories where installed dependencies materially improve the review.
-
-Start a PR title with `[skip]`, or put `@nibble-review skip` on its own line in the PR body, to stop before App-token creation, checkout, dependency installation, and model work.
+Publication failures and timeouts never trigger the fallback model, because their GitHub mutation outcome may be ambiguous. Each run writes a job summary with the model, Agent turns, token usage, estimated cost (from pi's model catalog, not a reconciled bill), comment counts, and publication status.
 
 ## Trust and failure boundaries
 
-- The caller and reusable workflow reject fork pull requests before trusted credentials reach PR code.
-- Mention triggers accept repository owners, organization members, and collaborators, and reject PR-author mentions without one of those trusted associations.
-- The workflow uses `pull_request` and `issue_comment`, never `pull_request_target`.
-- OpenCode project configuration is disabled so reviewed files cannot start repository-defined plugins or MCP processes with review credentials.
-- Every model phase sees the same cached GitHub snapshot and filtered diff.
-- A failed lane, audit, queue finalization, synthesis, or model run leaves no publishable review.
-- The CLI is dry-run by default; live GitHub mutations require `--publish`.
-- Publication checks the PR head again and does not replay an ambiguous failed mutation.
+- The example workflow and the reviewer's preflight reject fork pull requests before credentials reach PR code, and the workflow uses `pull_request`/`issue_comment`, never `pull_request_target`.
+- Mention triggers accept repository owners, organization members, and collaborators only.
+- pi starts with `--no-extensions --no-skills --no-prompt-templates --no-themes --no-context-files`, and the reviewed repository's `.pi/` directory is moved aside during the run, so PR content cannot load pi extensions or make pi install packages.
+- pi receives an allowlisted environment: provider `*_API_KEY` credentials, never `GITHUB_TOKEN` or Actions runtime tokens.
+- Every Agent runs with read-only filesystem access and no shell or network.
+- Every published body is scrubbed of secret-looking environment values and carries a hidden `<!-- nibble-review -->` marker, so a shared `github-actions[bot]` login is never confused with other workflows' comments.
+- Every model phase sees the same cached GitHub snapshot and filtered diff. A failed lane, audit, finalization, synthesis, or model run leaves nothing to publish.
+- The CLI is dry-run by default; live GitHub mutations require `--publish`. Publication re-checks the PR head and never replays an ambiguous failed mutation.
 
-Pull request text, comments, diffs, repository files, and linked GitHub content are untrusted evidence. They cannot grant tools or change the review contract.
+Pull request text, comments, diffs, repository files, and linked GitHub content are untrusted evidence. They cannot grant tools or change the review contract. Dependency installation is opt-in because package scripts run with the job's credentials available.
 
-## Calibration snapshots
+## Run it locally
 
-We maintain an eval framework that runs the reviewer against a corpus of private Singular pull requests and public pull requests from well-known open-source libraries. Each run captures a review without publishing it and uses an LLM judge to score the result.
-
-It is not a foolproof benchmark. The corpus reflects the code and review problems we care about, and LLM-as-judge has its own blind spots. It gives us a useful ruler for checking whether changes to the reviewer improve review quality without making reviews slower or more expensive.
-
-Time and reviewer cost are averages per review; cost excludes judge inference. Each row is that model's latest completed snapshot, not a same-revision model comparison.
-
-| Model                | Score |    Time |              Cost |
-| -------------------- | ----: | ------: | ----------------: |
-| DeepSeek V4 Flash    |  87.6 |  5m 45s | $0.0129–$0.0258\* |
-| GLM 5.3 Flash        |  87.8 |  5m 43s |           $0.0108 |
-| MiMo V2.5            |  86.0 |  7m 32s |           $0.0128 |
-| HY3                  |  83.0 |  3m 23s |           $0.0307 |
-| Qwen 3.7 Max         |  83.0 | 18m 41s |           $0.9504 |
-| GPT-5.6 Luna `xhigh` |  76.5 | 17m 14s |           $0.0838 |
-| MiniMax M3           |  74.7 |  9m 42s |           $0.6012 |
-
-\* DeepSeek V4 Flash uses separate [off-peak and weekday peak prices](https://opencode.ai/docs/go/#usage-limits). The range applies both prices to this snapshot's measured token usage; actual cost also varies with review content, cache behavior, and provider pricing changes.
-
-The DeepSeek row was refreshed on 2026-08-31 after separating conditional routing into `<ReviewRouter>`, keeping publication as the next authored component, and allowing review handoffs to resolve natively from the specialist leaves through audit and synthesis. On the same pinned, history-blind ten-PR corpus and unchanged rubric, all ten reviews completed and the score moved from 88.0 to 87.6 while mean reviewer time moved from 3m 49s to 5m 45s. The reviewer used 79 model completions instead of 80; total reviewer token volume increased 4.8%, while the combined audit and synthesis volume remained effectively flat. This is one directly comparable run, not a repeated-run confidence interval, and observed latency varies with provider load.
-
-See [eval/README.md](eval/README.md) for the capture, judgment, reporting, comparison, and private-corpus rules.
-
-## Local development
-
-Requirements:
-
-- Node.js 26 or newer;
-- Docker;
-- an authenticated GitHub CLI or `GH_TOKEN`/`GITHUB_TOKEN` for eval inputs;
-- credentials for any model used by a real review.
+Requirements: Node.js 26+, a GitHub token (`GH_TOKEN`, or `gh auth token`), and a model key.
 
 ```bash
 npm ci
-npm test
-npm run lint
-npm run format:check
-docker build -t nibble-review:local .
+npm run build
+git clone https://github.com/OWNER/REPO /tmp/review && git -C /tmp/review fetch origin pull/123/head && git -C /tmp/review checkout FETCH_HEAD
+GH_TOKEN=$(gh auth token) OPENCODE_API_KEY=... node dist/cli/review.js --repo OWNER/REPO --pr 123 --workspace /tmp/review
 ```
 
-Run one real pull request through the production review boundary without publishing to GitHub:
+Without `--publish` nothing is written to GitHub; the full result, including the exact review that would be posted, is printed as JSON.
+
+## Development
 
 ```bash
-OPENCODE_API_KEY=... npm run eval -- \
-  --no-config-input \
-  --pr trpc/trpc/7262 \
-  --model opencode-go/deepseek-flash \
-  --out eval/runs/smoke
+npm ci
+npm run lint
+npm run format:check
+npm test
 ```
 
-The evaluator prepares the exact checkout outside the image, mounts it into the review workspace, and invokes `review_runner` without `--publish`.
+CI also runs `shellcheck` and `actionlint`. [eval/README.md](eval/README.md) documents the evaluation harness used to compare models and reviewer changes on a fixed PR corpus.
 
-## Images and rollback
+## Versioning
 
-Successful pushes to `main` publish:
-
-```text
-ghcr.io/adlrocha/nibble-review:latest
-ghcr.io/adlrocha/nibble-review:sha-<commit>
-```
-
-Version tags publish matching image tags. The final pre-[AML](https://agent-markup-language.com/) reviewer is frozen as the manually published `legacy` tag with a matching [.github/workflows/review-legacy.yml](.github/workflows/review-legacy.yml). Normal pushes do not update it. It is a rollback path for Singular's existing deployment and does not receive new review features.
+Releases are tagged `vX.Y.Z`, and the `v1` tag moves to the latest compatible release. Pin `@v1` for automatic fixes, or a full version for fully reproducible reviews.
 
 ## Project documents
 
 - [PRD.md](PRD.md) defines the review engine's product and safety contract.
 - [eval/README.md](eval/README.md) documents repeatable model and reviewer evaluation.
-- [FUTURE.md](FUTURE.md) tracks the managed service and reviewer work that remains.
+- [FUTURE.md](FUTURE.md) tracks remaining work.

@@ -54,7 +54,7 @@ install_dependencies() {
   if [[ -f "$workspace/yarn.lock" ]]; then
     require_tool corepack
     log "installing dependencies with yarn"
-    (cd "$workspace" && corepack enable && yarn install --immutable || yarn install --frozen-lockfile)
+    (cd "$workspace" && corepack enable && { yarn install --immutable || yarn install --frozen-lockfile; })
     return
   fi
 

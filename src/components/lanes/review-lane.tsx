@@ -1,6 +1,5 @@
 import { Agent, Block, evaluate, Include, Tool, type AML } from "@aml-jsx/sdk"
 
-import { Context7 } from "../context7.js"
 import { REVIEW_POLICY_INCLUDE_LIMIT_BYTES } from "../../prompt-limits.js"
 import { REVIEW_CONTEXT_PATHS } from "../context/files.js"
 import { ReviewContextPrompt } from "../context/prompt.js"
@@ -25,7 +24,6 @@ export const ReviewLane: AML.Component<ReviewLaneProps> = async ({ lane, childre
       <Block tag="review-policy">
         <Include src="./instructions/lane.md" maxBytes={REVIEW_POLICY_INCLUDE_LIMIT_BYTES} title={false} />
       </Block>
-      <Context7 />
       <Tool use={githubTools.getPullRequest} />
       <Tool use={githubTools.getPullRequestDiff} />
       <Tool use={githubTools.getIssue} />

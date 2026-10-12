@@ -2,7 +2,11 @@
   "name": "nibble-review",
   "version": "0.2.0",
   "private": true,
-  "description": "AML-powered pull request review agent for the Nibble Review GitHub App.",
+  "description": "AI pull-request reviewer for GitHub Actions, built with AML and powered by pi.",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/adlrocha/nibble-review.git"
+  },
   "bin": {
     "review_preflight": "dist/cli/preflight.js",
     "review_runner": "dist/cli/review.js"
