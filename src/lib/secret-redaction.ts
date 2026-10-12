@@ -6,11 +6,17 @@ const MINIMUM_SECRET_LENGTH = 8
 
 export const REDACTED = "[redacted]"
 
+/** Values such as `OPENCODE_API_KEY` name a variable (e.g. API_KEY_ENV); they are not secrets. */
+const VARIABLE_NAME = /^[A-Z][A-Z0-9_]*$/u
+
 /** Collects secret-looking environment values, longest first so overlapping values redact fully. */
 export function secretValues(env: NodeJS.ProcessEnv): string[] {
-  const values = Object.entries(env).flatMap(([name, value]) =>
-    SECRET_NAME.test(name) && value && value.trim().length >= MINIMUM_SECRET_LENGTH ? [value.trim()] : []
-  )
+  const values = Object.entries(env).flatMap(([name, value]) => {
+    const trimmed = value?.trim() || ""
+    return SECRET_NAME.test(name) && trimmed.length >= MINIMUM_SECRET_LENGTH && !VARIABLE_NAME.test(trimmed)
+      ? [trimmed]
+      : []
+  })
   return [...new Set(values)].toSorted((left, right) => right.length - left.length)
 }
 

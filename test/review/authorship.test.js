@@ -80,6 +80,7 @@ test("secret values come from secret-looking env names, longest first, ignoring 
       GH_TOKEN: "ghs_much_longer_token_value",
       ACTIONS_RUNTIME_TOKEN: "ghs_much_longer_token_value",
       DB_PASSWORD: "tiny",
+      API_KEY_ENV: "OPENCODE_API_KEY",
       HOME: "/home/runner/not-a-secret-path"
     }),
     ["ghs_much_longer_token_value", "short-key-123"]
