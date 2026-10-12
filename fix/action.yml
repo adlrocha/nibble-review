@@ -1,0 +1,235 @@
+name: Nibble Fix
+description: Fixes one pull request's failing checks and open review threads with a sandboxed pi Agent, then pushes one commit.
+author: adlrocha
+branding:
+  icon: tool
+  color: purple
+
+inputs:
+  api-key:
+    description: API key for the model provider. Store it as a secret. Only the sandboxed Agent step receives it.
+    required: true
+  api-key-env:
+    description: Variable pi reads the key from, ending in _API_KEY.
+    required: false
+    default: OPENCODE_API_KEY
+  model:
+    description: pi model as provider/model.
+    required: false
+    default: opencode-go/deepseek-v4-flash
+  fallback-model:
+    description: Model retried once when the primary Agent run fails. Empty disables the retry.
+    required: false
+    default: opencode-go/minimax-m3
+  thinking-level:
+    description: pi thinking level (off, minimal, low, medium, high, xhigh). Empty uses pi's default.
+    required: false
+    default: ""
+  pr-number:
+    description: Pull request to fix. Must come from a branch in this repository.
+    required: true
+  attempt:
+    description: Which attempt this is, for the Agent's context and the summary.
+    required: false
+    default: "1"
+  max-attempts:
+    description: Attempt budget the caller enforces; shown to the Agent.
+    required: false
+    default: "1"
+  verify:
+    description: Newline-separated commands that must pass before anything is pushed, run in the sandbox.
+    required: false
+    default: ""
+  install-command:
+    description: Command that installs dependencies before the Agent runs (no secrets in its environment). Empty auto-detects npm, pnpm, or yarn.
+    required: false
+    default: ""
+  github-token:
+    description: Token for reading the PR, checks, and logs. Also pushes when no App is configured (GITHUB_TOKEN pushes do not trigger CI).
+    required: false
+    default: ${{ github.token }}
+  app-client-id:
+    description: GitHub App client ID. Its token is minted only in the final publish step.
+    required: false
+    default: ""
+  app-private-key:
+    description: GitHub App private key (PEM). Store it as a secret.
+    required: false
+    default: ""
+  sandbox-image:
+    description: Container image for the Agent and verify commands; it needs node and the repository's toolchain.
+    required: false
+    default: node:26-bookworm
+  egress-allow:
+    description: Comma-separated hosts the sandbox may reach. Empty derives the model API hosts from pi's catalog.
+    required: false
+    default: ""
+  timeout-minutes:
+    description: Upper bound for the Agent run.
+    required: false
+    default: "30"
+
+outputs:
+  result:
+    description: fixed, gave-up, or nothing-to-do.
+    value: ${{ steps.publish.outputs.result || 'nothing-to-do' }}
+  reason:
+    description: Why this result was chosen.
+    value: ${{ steps.publish.outputs.reason || 'no failing checks or unresolved review threads' }}
+  commit-sha:
+    description: The pushed commit, if any.
+    value: ${{ steps.publish.outputs.commit_sha }}
+
+runs:
+  using: composite
+  steps:
+    - name: Validate inputs
+      shell: bash
+      env:
+        API_KEY: ${{ inputs.api-key }}
+        API_KEY_ENV: ${{ inputs.api-key-env }}
+        PR_NUMBER: ${{ inputs.pr-number }}
+        ATTEMPT: ${{ inputs.attempt }}
+        MAX_ATTEMPTS: ${{ inputs.max-attempts }}
+        TIMEOUT_MINUTES: ${{ inputs.timeout-minutes }}
+      run: |
+        fail() { echo "::error title=Nibble Fix::$1"; exit 1; }
+        [[ -n "$API_KEY" ]] || fail "api-key is empty. Dependabot-triggered runs only see Dependabot secrets."
+        [[ "$API_KEY_ENV" =~ ^[A-Z][A-Z0-9_]*_API_KEY$ ]] || fail "api-key-env must be an uppercase variable ending in _API_KEY."
+        for value in "$PR_NUMBER" "$ATTEMPT" "$MAX_ATTEMPTS" "$TIMEOUT_MINUTES"; do
+          [[ "$value" =~ ^[1-9][0-9]*$ ]] || fail "pr-number, attempt, max-attempts, and timeout-minutes must be positive integers."
+        done
+        command -v docker >/dev/null || fail "the fixer sandbox needs Docker on the runner."
+        echo "FIX_DIR=$RUNNER_TEMP/nibble-fix" >> "$GITHUB_ENV"
+
+    - name: Set up Node.js
+      uses: actions/setup-node@v7
+      with:
+        node-version: 26
+        cache: npm
+        cache-dependency-path: ${{ github.action_path }}/../package-lock.json
+
+    - name: Install fixer
+      shell: bash
+      working-directory: ${{ github.action_path }}/..
+      env:
+        HUSKY: "0"
+      run: |
+        npm ci --ignore-scripts --no-audit --no-fund
+        npm run build
+        echo "NIBBLE_DIR=$PWD" >> "$GITHUB_ENV"
+
+    - name: Gather failing checks and review threads
+      id: context
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.github-token }}
+        PR_NUMBER: ${{ inputs.pr-number }}
+        ATTEMPT: ${{ inputs.attempt }}
+        MAX_ATTEMPTS: ${{ inputs.max-attempts }}
+      run: node "$NIBBLE_DIR/dist/cli/fix.js" context --pr "$PR_NUMBER" --dir "$FIX_DIR" --attempt "$ATTEMPT" --max-attempts "$MAX_ATTEMPTS"
+
+    - name: Check out pull request
+      if: steps.context.outputs.has_work == 'true'
+      uses: actions/checkout@v7
+      with:
+        ref: ${{ steps.context.outputs.head_sha }}
+        fetch-depth: 0
+        token: ${{ inputs.github-token }}
+        persist-credentials: false
+
+    - name: Keep a pristine copy before any repository code runs
+      if: steps.context.outputs.has_work == 'true'
+      shell: bash
+      run: cp -a "$GITHUB_WORKSPACE" "$FIX_DIR/pristine"
+
+    - name: Start sandbox
+      if: steps.context.outputs.has_work == 'true'
+      shell: bash
+      env:
+        FIX_MODEL: ${{ inputs.model }}
+        FIX_FALLBACK_MODEL: ${{ inputs.fallback-model }}
+        FIX_EGRESS_ALLOW: ${{ inputs.egress-allow }}
+        SANDBOX_IMAGE: ${{ inputs.sandbox-image }}
+        SANDBOX_ID: ${{ github.run_id }}-${{ github.run_attempt }}-${{ inputs.pr-number }}
+      run: |
+        hosts="$(node "$NIBBLE_DIR/dist/cli/fix.js" egress-hosts | sed -n 's/^hosts=//p')"
+        echo "Sandbox egress allowlist: $hosts"
+        echo "SANDBOX_ID=$SANDBOX_ID" >> "$GITHUB_ENV"
+        SANDBOX_ALLOW="$hosts" bash "$NIBBLE_DIR/bin/fix-sandbox.sh" up
+
+    - name: Install repository dependencies
+      if: steps.context.outputs.has_work == 'true'
+      shell: bash
+      env:
+        INSTALL_COMMAND: ${{ inputs.install-command }}
+        SANDBOX_IMAGE: ${{ inputs.sandbox-image }}
+        WORKSPACE: ${{ github.workspace }}
+      run: |
+        # Same image as the Agent, open network, no secrets: install scripts never run on the runner host.
+        if [[ -n "$INSTALL_COMMAND" ]]; then
+          bash "$NIBBLE_DIR/bin/fix-sandbox.sh" install bash -c "$INSTALL_COMMAND"
+        else
+          bash "$NIBBLE_DIR/bin/fix-sandbox.sh" install bash "$NIBBLE_DIR/bin/provision.sh"
+        fi
+
+    - name: Fix in sandbox
+      id: agent
+      if: steps.context.outputs.has_work == 'true'
+      shell: bash
+      env:
+        API_KEY: ${{ inputs.api-key }}
+        API_KEY_ENV: ${{ inputs.api-key-env }}
+        FIX_MODEL: ${{ inputs.model }}
+        FIX_FALLBACK_MODEL: ${{ inputs.fallback-model }}
+        FIX_THINKING_LEVEL: ${{ inputs.thinking-level }}
+        FIX_VERIFY: ${{ inputs.verify }}
+        SANDBOX_IMAGE: ${{ inputs.sandbox-image }}
+        TIMEOUT_MINUTES: ${{ inputs.timeout-minutes }}
+        WORKSPACE: ${{ github.workspace }}
+      run: |
+        export "$API_KEY_ENV=$API_KEY"
+        unset API_KEY
+        export SANDBOX_ENV="$API_KEY_ENV FIX_MODEL FIX_FALLBACK_MODEL FIX_THINKING_LEVEL FIX_VERIFY"
+        timeout "${TIMEOUT_MINUTES}m" bash "$NIBBLE_DIR/bin/fix-sandbox.sh" run \
+          node "$NIBBLE_DIR/dist/cli/fix.js" agent --dir "$FIX_DIR" --workspace "$WORKSPACE" \
+          || echo "::warning title=Nibble Fix::the sandboxed fixer exited with status $?"
+
+    - name: Verify in sandbox
+      if: steps.context.outputs.has_work == 'true' && steps.agent.outputs.agent_status == 'fixed'
+      shell: bash
+      env:
+        FIX_VERIFY: ${{ inputs.verify }}
+        SANDBOX_IMAGE: ${{ inputs.sandbox-image }}
+        WORKSPACE: ${{ github.workspace }}
+      run: |
+        SANDBOX_ENV="FIX_VERIFY" bash "$NIBBLE_DIR/bin/fix-sandbox.sh" run \
+          node "$NIBBLE_DIR/dist/cli/fix.js" verify --dir "$FIX_DIR" --workspace "$WORKSPACE"
+
+    - name: Stop sandbox
+      if: always() && steps.context.outputs.has_work == 'true'
+      shell: bash
+      env:
+        SANDBOX_IMAGE: ${{ inputs.sandbox-image }}
+      run: bash "$NIBBLE_DIR/bin/fix-sandbox.sh" down
+
+    - name: Create GitHub App token
+      id: app-token
+      if: steps.context.outputs.has_work == 'true' && inputs.app-client-id != ''
+      uses: actions/create-github-app-token@v3
+      with:
+        client-id: ${{ inputs.app-client-id }}
+        private-key: ${{ inputs.app-private-key }}
+        permission-contents: write
+        permission-pull-requests: write
+
+    - name: Publish fix
+      id: publish
+      if: steps.context.outputs.has_work == 'true'
+      shell: bash
+      env:
+        GH_TOKEN: ${{ steps.app-token.outputs.token || inputs.github-token }}
+        FIX_MODEL: ${{ inputs.model }}
+      run: |
+        # Runs no repository code: changes are read by comparing files with the pristine copy.
+        node "$NIBBLE_DIR/dist/cli/fix.js" publish --dir "$FIX_DIR" --workspace "$GITHUB_WORKSPACE" --pristine "$FIX_DIR/pristine"

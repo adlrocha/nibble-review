@@ -867,3 +867,16 @@ test("all failed attempts stop before any GitHub publication", async t => {
   assert.equal(providers, 1)
   assert.deepEqual(github.writes, [])
 })
+
+test("the configured pi thinking level reaches the provider and stays unset by default", async t => {
+  const workspace = fs.mkdtempSync(path.join(os.tmpdir(), "aml-runtime-"))
+  t.after(() => fs.rmSync(workspace, { recursive: true, force: true }))
+  const seen = []
+  const capture = providerOptions => {
+    seen.push(providerOptions.thinkingLevel)
+    return new DeterministicAgentProvider({ respond: () => Promise.reject(new Error("stop")) })
+  }
+  await assert.rejects(runReview(options(githubFixture().client, workspace, { thinkingLevel: "low" }), capture))
+  await assert.rejects(runReview(options(githubFixture().client, workspace), capture))
+  assert.deepEqual(seen, ["low", undefined])
+})

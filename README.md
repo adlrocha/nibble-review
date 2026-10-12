@@ -154,6 +154,33 @@ If you change `command`, change the mention in your workflow's `if:` filter to m
 
 Publication failures and timeouts never trigger the fallback model, because their GitHub mutation outcome may be ambiguous. Each run writes a job summary with the model, Agent turns, token usage, estimated cost (from pi's model catalog, not a reconciled bill), comment counts, and publication status.
 
+## Fixer
+
+`adlrocha/nibble-review/fix@v1` fixes one pull request's failing checks and unresolved review threads, then pushes one commit. It's built for Dependabot PRs: when CI breaks, the fixer adapts the code, the push re-runs CI and the reviewer, and your auto-merge takes it from there. See [examples/nibble-fix.yml](examples/nibble-fix.yml).
+
+```yaml
+- uses: adlrocha/nibble-review/fix@v1
+  with:
+    pr-number: ${{ github.event.workflow_run.pull_requests[0].number }}
+    api-key: ${{ secrets.OPENCODE_API_KEY }}
+    app-client-id: ${{ secrets.BOT_APP_CLIENT_ID }}
+    app-private-key: ${{ secrets.BOT_APP_PRIVATE_KEY }}
+    verify: |
+      npm run lint
+      npm test
+```
+
+It returns `result` (`fixed`, `gave-up`, or `nothing-to-do`), `reason`, and `commit-sha`. One invocation is one attempt; the caller counts attempts and labels the PR for a human on `gave-up`.
+
+The fixer needs a shell, so it runs inside a sandbox:
+
+- **Steps hold only what they need.** A trusted step gathers failing check logs and threads with a read token. Dependencies install inside the sandbox image with network but no secrets. The Agent runs inside the sandbox with only the model key. The verify commands run inside the sandbox with no keys. The App token is minted last, for a step that runs no repository code.
+- **Network.** The Agent's container sits on an internal Docker network. Its only route out is an allowlist proxy that tunnels HTTPS to the model API host taken from pi's catalog (`egress-allow` overrides it). It cannot reach package registries, so a fix that needs a new dependency gives up.
+- **Git.** The checkout's `.git` is mounted read-only in the sandbox. The commit is built through the GitHub API by comparing files with a pristine copy taken before any repository code ran, so no git command runs in a checkout that dependency scripts could have tampered with.
+- **Scope.** Changes under `.github/` are refused. A `fixed` result is only pushed when the verify commands pass, and it is pushed fast-forward only.
+
+Use a GitHub App for `app-client-id`/`app-private-key`: pushes made with the default `GITHUB_TOKEN` do not trigger CI. The App needs `Contents: write` and `Pull requests: write`. The job needs `actions: read`, `checks: read`, `contents: read`, and `pull-requests: read`, plus Docker on the runner (GitHub-hosted Ubuntu runners have it).
+
 ## Trust and failure boundaries
 
 - The example workflow and the reviewer's preflight reject fork pull requests before credentials reach PR code, and the workflow uses `pull_request`/`issue_comment`, never `pull_request_target`.

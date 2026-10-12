@@ -21,6 +21,8 @@ export type ReviewRuntimeOptions = {
   github: GitHubClient
   actionMode: GitHubActionMode
   model: string
+  /** pi thinking level; omitted uses pi's default. */
+  thinkingLevel?: string
   reviewEmojis?: boolean
   maximumConcurrency: number
   progress?: (line: string) => unknown
@@ -81,7 +83,8 @@ export async function runReview(
     const provider = createProvider({
       model: options.model,
       workspace: options.request.workspace,
-      sessionDirectory
+      sessionDirectory,
+      ...(options.thinkingLevel ? { thinkingLevel: options.thinkingLevel } : {})
     })
     const runtime = new AmlRuntime({
       agentProvider: provider,

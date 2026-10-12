@@ -12,6 +12,8 @@ export type CreateReviewProviderOptions = {
   sessionDirectory?: string
   /** pi CLI entrypoint run by the isolated launcher; defaults to the installed pi package. */
   piCli?: string
+  /** pi reasoning effort: off, minimal, low, medium, high, xhigh. pi's own default is medium. */
+  thinkingLevel?: string
 }
 
 /** Provider credentials pi may need. Everything else, including GitHub tokens, stays out of its process. */
@@ -64,6 +66,7 @@ export function createReviewProvider(
       PI_TELEMETRY: "0"
     },
     model: options.model,
+    ...(options.thinkingLevel ? { thinkingLevel: options.thinkingLevel } : {}),
     workingDirectory: options.workspace
   })
 }
