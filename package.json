@@ -3,6 +3,7 @@
   "version": "0.2.0",
   "private": true,
   "description": "AI pull-request reviewer for GitHub Actions, built with AML and powered by pi.",
+  "license": "MIT",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/adlrocha/nibble-review.git"

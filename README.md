@@ -227,3 +227,7 @@ Releases are tagged `vX.Y.Z`, and the `v1` tag moves to the latest compatible re
 - [PRD.md](PRD.md) defines the review engine's product and safety contract.
 - [eval/README.md](eval/README.md) documents repeatable model and reviewer evaluation.
 - [FUTURE.md](FUTURE.md) tracks remaining work.
+
+## License
+
+[MIT](LICENSE). Derived from Singular's `singular-code-review-agent`.
