@@ -1,12 +1,18 @@
-# Copy to .github/workflows/nibble-fix.yml. Fixes Dependabot PRs whose CI failed.
-# Secrets: OPENCODE_API_KEY, BOT_APP_CLIENT_ID, BOT_APP_PRIVATE_KEY. Add them to the
-# Dependabot secret store too, because Dependabot-triggered runs only see that store.
+# Copy to .github/workflows/nibble-fix.yml. Experimental: a maintainer starts it for one
+# pull request (Actions tab → Nibble Fix → Run workflow) and reviews the pushed commit
+# before merging. Don't trigger it automatically on dependency updates or pair it with
+# auto-merge; see the README's Fixer section.
+# Secrets: OPENCODE_API_KEY, NIBBLE_APP_CLIENT_ID, NIBBLE_APP_PRIVATE_KEY (an App with
+# only Contents and Pull requests write).
 name: Nibble Fix
 
 on:
-  workflow_run:
-    workflows: [CI]
-    types: [completed]
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: Pull request to fix
+        required: true
+        type: string
 
 permissions:
   actions: read
@@ -16,29 +22,27 @@ permissions:
 
 jobs:
   fix:
-    if: >-
-      github.event.workflow_run.conclusion == 'failure' && github.event.workflow_run.event == 'pull_request' && startsWith(github.event.workflow_run.head_branch, 'dependabot/') && github.event.workflow_run.pull_requests[0] != null
     runs-on: ubuntu-latest
     timeout-minutes: 45
     concurrency:
-      group: nibble-fix-${{ github.event.workflow_run.pull_requests[0].number }}
+      group: nibble-fix-${{ inputs.pr_number }}
       cancel-in-progress: false
     steps:
       - id: fix
         uses: adlrocha/nibble-review/fix@v1
         with:
-          pr-number: ${{ github.event.workflow_run.pull_requests[0].number }}
+          pr-number: ${{ inputs.pr_number }}
           api-key: ${{ secrets.OPENCODE_API_KEY }}
-          app-client-id: ${{ secrets.BOT_APP_CLIENT_ID }}
-          app-private-key: ${{ secrets.BOT_APP_PRIVATE_KEY }}
+          app-client-id: ${{ secrets.NIBBLE_APP_CLIENT_ID }}
+          app-private-key: ${{ secrets.NIBBLE_APP_PRIVATE_KEY }}
           verify: |
             npm run lint
             npm test
 
-      - name: Ask for a human when the fixer gives up
+      - name: Report when the fixer gives up
         if: steps.fix.outputs.result == 'gave-up'
         env:
-          PR: ${{ github.event.workflow_run.pull_requests[0].number }}
+          PR: ${{ inputs.pr_number }}
           REASON: ${{ steps.fix.outputs.reason }}
         run: |
           echo "::warning::Nibble Fix gave up on PR $PR: $REASON"

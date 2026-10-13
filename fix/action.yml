@@ -1,5 +1,5 @@
 name: Nibble Fix
-description: Fixes one pull request's failing checks and open review threads with a sandboxed pi Agent, then pushes one commit.
+description: Experimental. Fixes one pull request's failing checks and open review threads with a sandboxed pi Agent, then pushes one commit.
 author: adlrocha
 branding:
   icon: tool
