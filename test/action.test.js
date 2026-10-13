@@ -84,6 +84,11 @@ test("the action checks out the pull request without persisting credentials, aft
   assert.match(action, /ref: refs\/pull\/\$\{\{ inputs\.pr-number \}\}\/head/u)
 })
 
+test("the action forwards allow-skip to preflight, honoring skips by default", () => {
+  assert.match(action, /allow-skip:\n(?:.*\n)*?\s+default: "true"/u)
+  assert.match(action, /REVIEW_ALLOW_SKIP: \$\{\{ inputs\.allow-skip \}\}/u)
+})
+
 test("the action posts as github-actions[bot] unless an App token is configured", () => {
   assert.match(action, /default: \$\{\{ github\.token \}\}/u)
   assert.match(

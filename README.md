@@ -20,7 +20,7 @@ The reviewer is written with [Agent Markup Language (AML)](https://agent-markup-
 
 That's it. Reviews post as `github-actions[bot]` using the job's own `GITHUB_TOKEN`; the workflow's `permissions` block grants exactly `contents: read`, `issues: write`, and `pull-requests: write`.
 
-The example triggers on opened, ready-for-review, and updated pull requests from the same repository, on manual dispatch, and on `@nibble-review` comments from owners, members, and collaborators. Start a PR title with `[skip]`, or put `@nibble-review skip` on its own line in the PR body, to skip a review.
+The example triggers on opened, ready-for-review, and updated pull requests from the same repository, on manual dispatch, and on `@nibble-review` comments from owners, members, and collaborators. An owner, member, or collaborator can skip a review by starting the PR title with `[skip]`, or by putting `@nibble-review skip` on its own line in the PR body. Directives on PRs opened by bots, Apps, or outside contributors are ignored. A skipped review still passes the job, so if `review / agent` is a required check, set `allow-skip: "false"` so that the check always means a review ran.
 
 ## What a review produces
 
@@ -135,6 +135,7 @@ Models investigate and write. They do not decide which commit was reviewed, whet
 | `app-client-id`, `app-private-key` | empty | Optional GitHub App credentials; reviews then post as the App's bot. |
 | `command` | `@nibble-review` | Mention that requests a review in a PR comment. |
 | `pr-number` | from the event | Pull request to review. |
+| `allow-skip` | `true` | Honor `[skip]` titles and `@nibble-review skip` body lines from trusted human authors. Set `false` when the review check is required for merging. |
 | `install-dependencies` | `false` | Install the repository's npm/pnpm/yarn dependencies first. Runs their install scripts. |
 | `emojis` | `true` | Prefix inline comments with severity emojis. |
 | `timeout-minutes` | `20` | Upper bound for each review attempt. |
@@ -154,17 +155,19 @@ If you change `command`, change the mention in your workflow's `if:` filter to m
 
 Publication failures and timeouts never trigger the fallback model, because their GitHub mutation outcome may be ambiguous. Each run writes a job summary with the model, Agent turns, token usage, estimated cost (from pi's model catalog, not a reconciled bill), comment counts, and publication status.
 
-## Fixer
+## Fixer (experimental)
 
-`adlrocha/nibble-review/fix@v1` fixes one pull request's failing checks and unresolved review threads, then pushes one commit. It's built for Dependabot PRs: when CI breaks, the fixer adapts the code, the push re-runs CI and the reviewer, and your auto-merge takes it from there. See [examples/nibble-fix.yml](examples/nibble-fix.yml).
+`adlrocha/nibble-review/fix@v1` fixes one pull request's failing checks and unresolved review threads, then pushes one commit. See [examples/nibble-fix.yml](examples/nibble-fix.yml).
+
+**Don't run it unattended on dependency updates.** The Agent reads the code that changed, and a dependency update is exactly where a supply-chain attacker controls that code. Text in the update can steer the Agent. The sandbox stops it from taking credentials, but whatever it writes is pushed. Start it by hand (the example uses `workflow_dispatch`), pair it with a human merge rather than auto-merge, and give its App no `Workflows` permission. Hand failing dependency PRs to an agent you supervise instead.
 
 ```yaml
 - uses: adlrocha/nibble-review/fix@v1
   with:
-    pr-number: ${{ github.event.workflow_run.pull_requests[0].number }}
+    pr-number: ${{ inputs.pr_number }}
     api-key: ${{ secrets.OPENCODE_API_KEY }}
-    app-client-id: ${{ secrets.BOT_APP_CLIENT_ID }}
-    app-private-key: ${{ secrets.BOT_APP_PRIVATE_KEY }}
+    app-client-id: ${{ secrets.NIBBLE_APP_CLIENT_ID }}
+    app-private-key: ${{ secrets.NIBBLE_APP_PRIVATE_KEY }}
     verify: |
       npm run lint
       npm test
@@ -179,7 +182,7 @@ The fixer needs a shell, so it runs inside a sandbox:
 - **Git.** The checkout's `.git` is mounted read-only in the sandbox. The commit is built through the GitHub API by comparing files with a pristine copy taken before any repository code ran, so no git command runs in a checkout that dependency scripts could have tampered with.
 - **Scope.** Changes under `.github/` are refused. A `fixed` result is only pushed when the verify commands pass, and it is pushed fast-forward only.
 
-Use a GitHub App for `app-client-id`/`app-private-key`: pushes made with the default `GITHUB_TOKEN` do not trigger CI. The App needs `Contents: write` and `Pull requests: write`. The job needs `actions: read`, `checks: read`, `contents: read`, and `pull-requests: read`, plus Docker on the runner (GitHub-hosted Ubuntu runners have it).
+Use a GitHub App for `app-client-id`/`app-private-key`: pushes made with the default `GITHUB_TOKEN` do not trigger CI. The App needs `Contents: write` and `Pull requests: write`, and nothing more. Never grant it `Workflows`, which would let a leaked key rewrite CI and read every Actions secret. Install it only on the repositories that run the fixer,. The job needs `actions: read`, `checks: read`, `contents: read`, and `pull-requests: read`, plus Docker on the runner (GitHub-hosted Ubuntu runners have it).
 
 ## Trust and failure boundaries
 

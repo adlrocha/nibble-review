@@ -39,3 +39,5 @@ jobs:
       - uses: adlrocha/nibble-review@v1
         with:
           api-key: ${{ secrets.OPENCODE_API_KEY }}
+          # Uncomment when "review / agent" is a required check, so a [skip] title can't pass it.
+          # allow-skip: "false"

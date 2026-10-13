@@ -168,7 +168,8 @@ export type PullRequestSummary = {
   title?: string | null
   body?: string | null
   author?: { login?: string | null } | null
-  user?: { login?: string | null } | null
+  user?: { login?: string | null; type?: string | null } | null
+  author_association?: string | null
   baseRefName?: string | null
   headRefName?: string | null
   headRefOid?: string | null

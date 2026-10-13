@@ -5,6 +5,15 @@ import { fileURLToPath } from "node:url"
 import { createGitHubClient } from "../services/github/client.js"
 import { ReviewPreflight } from "../services/review-preflight.js"
 
+/** Parses REVIEW_ALLOW_SKIP; unset means skip directives are honored. */
+export function parseAllowSkip(value: string | undefined): boolean {
+  const normalized = value?.trim().toLowerCase() || "true"
+  if (normalized !== "true" && normalized !== "false") {
+    throw new Error("REVIEW_ALLOW_SKIP must be true or false")
+  }
+  return normalized === "true"
+}
+
 /** Runs the reusable workflow's credential and trigger preflight. */
 export async function main(env = process.env): Promise<void> {
   const repository = env.GITHUB_REPOSITORY?.trim()
@@ -29,7 +38,8 @@ export async function main(env = process.env): Promise<void> {
     github,
     repository,
     prNumber,
-    command: env.REVIEW_COMMAND?.trim() || undefined
+    command: env.REVIEW_COMMAND?.trim() || undefined,
+    allowSkip: parseAllowSkip(env.REVIEW_ALLOW_SKIP)
   }).evaluate(triggerCommentId)
   if (env.GITHUB_OUTPUT) {
     appendFileSync(env.GITHUB_OUTPUT, `should_review=${result.shouldReview}\nreason=${result.reason}\n`)

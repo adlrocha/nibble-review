@@ -49,6 +49,11 @@ inputs:
     description: Issue comment that requested the review. Defaults to the triggering comment.
     required: false
     default: ${{ github.event.comment.id }}
+  allow-skip:
+    description: >-
+      Let a trusted human author skip the review with a "[skip]" title prefix or a "<command> skip" line in the body. A skipped review still passes the job, so set this to "false" when the review check is required for merging.
+    required: false
+    default: "true"
   install-dependencies:
     description: Install the reviewed repository's npm/pnpm/yarn dependencies before reviewing (runs their install scripts).
     required: false
@@ -109,6 +114,7 @@ runs:
         PR_NUMBER: ${{ inputs.pr-number }}
         TRIGGER_COMMENT_ID: ${{ inputs.trigger-comment-id }}
         REVIEW_COMMAND: ${{ inputs.command }}
+        REVIEW_ALLOW_SKIP: ${{ inputs.allow-skip }}
       run: |
         for attempt in 1 2; do
           if node "$GITHUB_ACTION_PATH/dist/cli/preflight.js"; then

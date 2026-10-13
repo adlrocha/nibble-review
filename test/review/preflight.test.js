@@ -1,6 +1,7 @@
 import assert from "node:assert/strict"
 import test from "node:test"
 
+import { parseAllowSkip } from "../../dist/cli/preflight.js"
 import { ReviewPreflight } from "../../dist/services/review-preflight.js"
 
 function evaluateGuard({ triggerCommentId, ...options }) {
@@ -174,6 +175,8 @@ test("guard skips pull requests with a skip title prefix", async () => {
         return {
           number: 42,
           title: "  [skip] Drafting generated fixtures",
+          author_association: "MEMBER",
+          user: { login: "alice", type: "User" },
           head: { repo: { full_name: "owner/repo" } }
         }
       },
@@ -196,6 +199,8 @@ test("guard skips pull requests with a body skip directive", async () => {
         return {
           number: 42,
           body: "Generated update.\n\n@nibble-review skip\n\nNo bot review needed.",
+          author_association: "COLLABORATOR",
+          user: { login: "alice", type: "User" },
           head: { repo: { full_name: "owner/repo" } }
         }
       },
@@ -206,6 +211,59 @@ test("guard skips pull requests with a body skip directive", async () => {
   })
 
   assert.deepEqual(result, { shouldReview: false, reason: "pull request body requested skip" })
+})
+
+function skipRequest(pullRequest, options = {}) {
+  return evaluateGuard({
+    repository: "owner/repo",
+    prNumber: 42,
+    triggerCommentId: null,
+    ...options,
+    github: {
+      async getPullRequest() {
+        return { number: 42, head: { repo: { full_name: "owner/repo" } }, ...pullRequest }
+      },
+      async getIssueComment() {
+        throw new Error("not used")
+      }
+    }
+  })
+}
+
+test("guard ignores skip directives from bots and untrusted authors", async () => {
+  const allowed = { shouldReview: true, reason: "allowed" }
+  assert.deepEqual(
+    await skipRequest({
+      title: "[skip] bump",
+      author_association: "MEMBER",
+      user: { login: "nibble-review[bot]", type: "Bot" }
+    }),
+    allowed
+  )
+  assert.deepEqual(
+    await skipRequest({
+      body: "@nibble-review skip",
+      author_association: "CONTRIBUTOR",
+      user: { login: "mallory", type: "User" }
+    }),
+    allowed
+  )
+  assert.deepEqual(await skipRequest({ title: "[skip] no author data" }), allowed)
+})
+
+test("guard ignores every pull request skip directive when skipping is disabled", async () => {
+  const author = { author_association: "OWNER", user: { login: "alice", type: "User" } }
+  const allowed = { shouldReview: true, reason: "allowed" }
+  assert.deepEqual(await skipRequest({ title: "[skip] docs", ...author }, { allowSkip: false }), allowed)
+  assert.deepEqual(await skipRequest({ body: "@nibble-review skip", ...author }, { allowSkip: false }), allowed)
+})
+
+test("REVIEW_ALLOW_SKIP defaults to true and rejects anything but true or false", () => {
+  assert.equal(parseAllowSkip(undefined), true)
+  assert.equal(parseAllowSkip(""), true)
+  assert.equal(parseAllowSkip(" FALSE "), false)
+  assert.equal(parseAllowSkip("true"), true)
+  assert.throws(() => parseAllowSkip("no"), /REVIEW_ALLOW_SKIP must be true or false/)
 })
 
 test("guard denies forks and untrusted trigger comments", async () => {

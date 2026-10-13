@@ -1,5 +1,5 @@
 import { REVIEW_COMMAND } from "./review-evidence.js"
-import type { GitHubClient } from "./github/client.js"
+import type { GitHubClient, PullRequestSummary } from "./github/client.js"
 
 const SKIP_TITLE_PREFIX = "[skip]"
 const SKIP_COMMAND_PATTERN = /^(?:please\s+)?skip(?:\s+(?:this|review|run))?[.!?]?\s*$/u
@@ -13,17 +13,25 @@ export class ReviewPreflight {
   readonly #repository: string
   readonly #prNumber: number
   readonly #command: string
+  readonly #allowSkip: boolean
 
   constructor(options: {
     github: Pick<GitHubClient, "getPullRequest" | "getIssueComment">
     repository: string
     prNumber: number
     command?: string
+    /**
+     * Whether a title or body skip directive may suppress the review. A skipped
+     * review still passes the job, so repositories that require the review
+     * check turn this off.
+     */
+    allowSkip?: boolean
   }) {
     this.#github = options.github
     this.#repository = options.repository
     this.#prNumber = options.prNumber
     this.#command = options.command || REVIEW_COMMAND
+    this.#allowSkip = options.allowSkip ?? true
   }
 
   /** Verifies one workflow request before trusted credentials reach PR code. */
@@ -43,16 +51,9 @@ export class ReviewPreflight {
     if (pullRequest.head?.repo?.full_name !== this.#repository) {
       return { shouldReview: false, reason: "fork pull requests are not reviewed" }
     }
-    if (
-      String(pullRequest.title || "")
-        .trimStart()
-        .toLowerCase()
-        .startsWith(SKIP_TITLE_PREFIX)
-    ) {
-      return { shouldReview: false, reason: "pull request title requested skip" }
-    }
-    if (this.#requestsSkip(pullRequest.body)) {
-      return { shouldReview: false, reason: "pull request body requested skip" }
+    const skip = this.#pullRequestSkip(pullRequest)
+    if (skip) {
+      return { shouldReview: false, reason: skip }
     }
     if (!triggerCommentId) {
       return { shouldReview: true, reason: "allowed" }
@@ -89,6 +90,28 @@ export class ReviewPreflight {
     }
 
     return { shouldReview: true, reason: "allowed" }
+  }
+
+  /**
+   * Honors a title or body skip directive only when skipping is enabled and the
+   * pull request was opened by a trusted human: an App or bot that can open
+   * pull requests must not be able to switch off the required review.
+   */
+  #pullRequestSkip(pullRequest: PullRequestSummary): string | null {
+    const title = String(pullRequest.title || "")
+      .trimStart()
+      .toLowerCase()
+      .startsWith(SKIP_TITLE_PREFIX)
+    const body = this.#requestsSkip(pullRequest.body)
+    if (!title && !body) {
+      return null
+    }
+    const trustedHuman =
+      pullRequest.user?.type !== "Bot" && TRUSTED_ASSOCIATIONS.has(pullRequest.author_association || "")
+    if (!this.#allowSkip || !trustedHuman) {
+      return null
+    }
+    return title ? "pull request title requested skip" : "pull request body requested skip"
   }
 
   /** Recognizes only an explicit command on the same line as the bot mention. */
