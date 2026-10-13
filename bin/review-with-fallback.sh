@@ -5,6 +5,13 @@ set -euo pipefail
 
 runner="${NIBBLE_REVIEW_RUNNER:-node ${GITHUB_ACTION_PATH:?}/dist/cli/review.js}"
 timeout_minutes="${TIMEOUT_MINUTES:-20}"
+# The runner abandons an unpublished review a minute before the hard timeout and
+# exits 2, so a slow primary model still hands over to the fallback.
+deadline_seconds=$((timeout_minutes * 60 - 60))
+if [[ "$deadline_seconds" -lt 30 ]]; then
+  deadline_seconds=30
+fi
+export NIBBLE_REVIEW_DEADLINE_SECONDS="$deadline_seconds"
 
 run_review() {
   # shellcheck disable=SC2086 # the runner command is intentionally word-split

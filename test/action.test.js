@@ -21,6 +21,7 @@ function runFallback(t, exitCodes, env = {}) {
 codes=(${exitCodes.join(" ")})
 count=$(wc -l < "${log}" 2>/dev/null || echo 0)
 echo "$REVIEW_MODEL $*" >> "${log}"
+echo "$NIBBLE_REVIEW_DEADLINE_SECONDS" > "${log}.deadline"
 exit "\${codes[$count]}"
 `
   )
@@ -37,7 +38,8 @@ exit "\${codes[$count]}"
     }
   })
   const calls = fs.existsSync(log) ? fs.readFileSync(log, "utf8").trim().split("\n") : []
-  return { status: result.status, calls, stdout: result.stdout }
+  const deadline = fs.existsSync(`${log}.deadline`) ? fs.readFileSync(`${log}.deadline`, "utf8").trim() : null
+  return { status: result.status, calls, stdout: result.stdout, deadline }
 }
 
 test("a successful primary review does not retry", t => {
@@ -51,6 +53,11 @@ test("a pre-publication failure retries once with the fallback model", t => {
   assert.equal(status, 0)
   assert.deepEqual(calls, ["primary/model --publish", "fallback/model --publish"])
   assert.match(stdout, /::warning title=Nibble Review::primary\/model failed before publication/u)
+})
+
+test("the runner gives up an unpublished review a minute before the attempt timeout", t => {
+  assert.equal(runFallback(t, [0], { TIMEOUT_MINUTES: "20" }).deadline, "1140")
+  assert.equal(runFallback(t, [0], { TIMEOUT_MINUTES: "1" }).deadline, "30")
 })
 
 test("other failures never retry, because something may already be published", t => {

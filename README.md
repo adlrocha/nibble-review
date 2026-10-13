@@ -153,7 +153,7 @@ Use another provider by changing two inputs:
 
 If you change `command`, change the mention in your workflow's `if:` filter to match.
 
-Publication failures and timeouts never trigger the fallback model, because their GitHub mutation outcome may be ambiguous. Each run writes a job summary with the model, Agent turns, token usage, estimated cost (from pi's model catalog, not a reconciled bill), comment counts, and publication status.
+A review that has published nothing a minute before `timeout-minutes` gives up and hands over to the fallback model, so a slow primary model doesn't fail the check. Publication failures, and timeouts after publishing has started, never trigger the fallback, because their GitHub mutation outcome may be ambiguous. The job's own `timeout-minutes` should cover two attempts (the example uses 45). Each run writes a job summary with the model, Agent turns, token usage, estimated cost (from pi's model catalog, not a reconciled bill), comment counts, and publication status.
 
 ## Fixer (experimental)
 

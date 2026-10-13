@@ -134,6 +134,10 @@ export async function runReview(
   const usage = withPiUsage(telemetry.usage(), readPiUsage(sessionDirectory))
   rmSync(sessionDirectory, { recursive: true, force: true })
 
+  if (!selected && signal.aborted && environment.actions.mutationStarted()) {
+    // Something may already be on the pull request, so a fallback attempt could duplicate it.
+    throw new Error(`review aborted after publication started: ${String(signal.reason ?? "aborted")}`)
+  }
   if (!selected) {
     const failures = attempts.map(attempt => `attempt ${attempt.number}: ${attempt.error}`).join("; ")
     const error = new ReviewUnavailableError(`review unsuccessful: ${failures}`)

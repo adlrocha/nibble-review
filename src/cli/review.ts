@@ -144,6 +144,15 @@ export async function main(argv = process.argv.slice(2), env = process.env): Pro
     }
   }
 
+  const deadlineSeconds = reviewDeadlineSeconds(env.NIBBLE_REVIEW_DEADLINE_SECONDS)
+  const deadline = new AbortController()
+  const timer =
+    deadlineSeconds === null
+      ? null
+      : setTimeout(
+          () => deadline.abort(new Error(`review deadline of ${deadlineSeconds}s reached`)),
+          deadlineSeconds * 1000
+        )
   const result = await runReview({
     request: {
       repository: options.repository,
@@ -164,7 +173,12 @@ export async function main(argv = process.argv.slice(2), env = process.env): Pro
     ...(env.REVIEW_THINKING_LEVEL?.trim() ? { thinkingLevel: env.REVIEW_THINKING_LEVEL.trim() } : {}),
     reviewEmojis: env.REVIEW_EMOJIS !== "false",
     maximumConcurrency: options.concurrency,
-    progress: line => process.stderr.write(`${line}\n`)
+    progress: line => process.stderr.write(`${line}\n`),
+    signal: deadline.signal
+  }).finally(() => {
+    if (timer) {
+      clearTimeout(timer)
+    }
   })
 
   // The result stays in memory; only the Agent-readable evidence files are
@@ -180,6 +194,21 @@ export async function main(argv = process.argv.slice(2), env = process.env): Pro
   }
 }
 
+/**
+ * Parses NIBBLE_REVIEW_DEADLINE_SECONDS, the budget after which an unpublished
+ * review gives up so the fallback model can still run inside the attempt timeout.
+ */
+export function reviewDeadlineSeconds(value: string | undefined): number | null {
+  if (value === undefined || value.trim() === "") {
+    return null
+  }
+  const seconds = Number(value)
+  if (!Number.isInteger(seconds) || seconds < 1) {
+    throw new Error("NIBBLE_REVIEW_DEADLINE_SECONDS must be a positive integer")
+  }
+  return seconds
+}
+
 /** Reserves exit code 2 for failures that happened before a publishable review existed. */
 export function reviewExitCode(error: unknown): number {
   return error instanceof ReviewUnavailableError ? 2 : 1
@@ -191,5 +220,8 @@ if (entrypoint && realpathSync(entrypoint) === realpathSync(fileURLToPath(import
   main().catch(error => {
     process.stderr.write(`review_runner: ${error instanceof Error ? error.message : String(error)}\n`)
     process.exitCode = reviewExitCode(error)
+    // A cancelled Agent child may hold the event loop open; exit before the outer
+    // timeout turns this fallback-eligible status into a timeout.
+    setTimeout(() => process.exit(), 5000).unref()
   })
 }

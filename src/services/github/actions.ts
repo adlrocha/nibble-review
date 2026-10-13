@@ -22,6 +22,8 @@ export type GitHubActions = {
   replyToReviewComment(prNumber: number, commentId: number, body: string): Promise<GitHubActionReceipt>
   publicationState(expectation: PublicationExpectation): PublicationState
   receipts(): GitHubActionReceipt[]
+  /** True once any live GitHub mutation has started, even if it has not settled. */
+  mutationStarted(): boolean
 }
 
 type ActionKind = GitHubActionReceipt["kind"]
@@ -31,6 +33,7 @@ class ActionLedger {
   readonly #scope: string
   readonly #inFlight = new Map<string, Promise<GitHubActionReceipt>>()
   readonly #receipts = new Map<string, GitHubActionReceipt>()
+  #mutated = false
 
   constructor(scope: string) {
     this.#scope = scope
@@ -64,6 +67,7 @@ class ActionLedger {
     const execution = Promise.resolve().then(async () => {
       try {
         if (mode === "live") {
+          this.#mutated = true
           await operation()
         }
         const receipt: GitHubActionReceipt = {
@@ -94,6 +98,11 @@ class ActionLedger {
     }
     void execution.then(clear, clear)
     return execution
+  }
+
+  /** Whether a live mutation was ever sent, so a retry could duplicate it. */
+  mutated(): boolean {
+    return this.#mutated
   }
 
   /** Returns a detached audit trail in first-execution order. */
@@ -171,5 +180,10 @@ export class ReviewGitHubActions implements GitHubActions {
   /** Exposes the immutable publication ledger to run results and evals. */
   receipts(): GitHubActionReceipt[] {
     return this.#ledger.values()
+  }
+
+  /** Lets the runner tell a pre-publication abort from one that may leave partial output. */
+  mutationStarted(): boolean {
+    return this.#ledger.mutated()
   }
 }

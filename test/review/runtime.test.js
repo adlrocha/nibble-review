@@ -8,7 +8,7 @@ import test from "node:test"
 import { DeterministicAgentProvider } from "@aml-jsx/sdk/testing"
 
 import { createReviewProvider } from "../../dist/lib/review-provider.js"
-import { reviewExitCode } from "../../dist/cli/review.js"
+import { reviewDeadlineSeconds, reviewExitCode } from "../../dist/cli/review.js"
 import { ReviewUnavailableError, runReview } from "../../dist/run-review.js"
 import { ReviewGitHubActions } from "../../dist/services/github/actions.js"
 import { createGitHubClient } from "../../dist/services/github/client.js"
@@ -244,6 +244,15 @@ function completeProvider(publisher) {
 test("review CLI reserves fallback exit status for pre-publication review failure", () => {
   assert.equal(reviewExitCode(new ReviewUnavailableError("provider failed")), 2)
   assert.equal(reviewExitCode(new Error("publication failed")), 1)
+})
+
+test("review deadline is optional and must be a positive whole number of seconds", () => {
+  assert.equal(reviewDeadlineSeconds(undefined), null)
+  assert.equal(reviewDeadlineSeconds(" "), null)
+  assert.equal(reviewDeadlineSeconds("1140"), 1140)
+  for (const invalid of ["0", "-5", "1.5", "soon"]) {
+    assert.throws(() => reviewDeadlineSeconds(invalid), /NIBBLE_REVIEW_DEADLINE_SECONDS must be a positive integer/u)
+  }
 })
 
 test("runtime materializes only the four Agent-readable review context files", async t => {
@@ -661,6 +670,71 @@ test("gate answers publish through post_issue_comment without starting review la
   )
 })
 
+test("a deadline after a GitHub mutation started is not fallback-eligible", async t => {
+  const workspace = fs.mkdtempSync(path.join(os.tmpdir(), "aml-runtime-"))
+  const eventFile = path.join(workspace, "event.json")
+  fs.writeFileSync(
+    eventFile,
+    JSON.stringify({
+      action: "created",
+      comment: { id: 79, body: "@nibble-review what does this do?", user: { login: "author" } },
+      sender: { login: "author" }
+    })
+  )
+  t.after(() => fs.rmSync(workspace, { recursive: true, force: true }))
+  const github = githubFixture()
+  const deadline = new AbortController()
+  github.client.createPullRequestComment = async (prNumber, body) => {
+    github.writes.push({ kind: "issue-comment", prNumber, body })
+    // The deadline fires while the POST is in flight and the POST then fails, so it may
+    // still have reached GitHub: retrying with the fallback model could post it twice.
+    deadline.abort(new Error("review deadline of 1s reached"))
+    throw new Error("socket hang up")
+  }
+  const provider = new DeterministicAgentProvider({
+    async respond() {
+      return { text: "", structured: { decision: "answer", answer: "It keeps the cache fresh." } }
+    }
+  })
+  const base = options(github.client, workspace)
+
+  await assert.rejects(
+    runReview(
+      options(github.client, workspace, {
+        actionMode: "live",
+        signal: deadline.signal,
+        request: { ...base.request, eventName: "issue_comment", eventPath: eventFile }
+      }),
+      () => provider
+    ),
+    error => !(error instanceof ReviewUnavailableError) && /aborted after publication started/u.test(error.message)
+  )
+  assert.ok(github.writes.some(write => write.kind === "issue-comment"))
+})
+
+test("live mutations are tracked from the moment they start, and dry runs never count", async () => {
+  const github = githubFixture()
+  const actionsFor = mode =>
+    new ReviewGitHubActions({
+      mode,
+      github: github.client,
+      repository: "owner/repository",
+      prNumber: 42,
+      headSha: "2222222222222222222222222222222222222222"
+    })
+  const dryRun = actionsFor("dry-run")
+  await dryRun.postPullRequestComment(42, "prepared")
+  assert.equal(dryRun.mutationStarted(), false)
+
+  github.client.createPullRequestComment = async () => {
+    throw new Error("connection reset")
+  }
+  const live = actionsFor("live")
+  assert.equal(live.mutationStarted(), false)
+  await assert.rejects(live.postPullRequestComment(42, "answer"))
+  assert.equal(live.mutationStarted(), true)
+})
+
 test("explicit re-review mentions bypass the gate Agent and start every review lane", async t => {
   const workspace = fs.mkdtempSync(path.join(os.tmpdir(), "aml-runtime-"))
   const eventFile = path.join(workspace, "event.json")
@@ -865,6 +939,35 @@ test("all failed attempts stop before any GitHub publication", async t => {
       error instanceof ReviewUnavailableError && /attempt 1: intent-contract: .*failed: offline/u.test(error.message)
   )
   assert.equal(providers, 1)
+  assert.deepEqual(github.writes, [])
+})
+
+test("a deadline before publication is a fallback-eligible unavailable review", async t => {
+  const workspace = fs.mkdtempSync(path.join(os.tmpdir(), "aml-runtime-"))
+  t.after(() => fs.rmSync(workspace, { recursive: true, force: true }))
+  const github = githubFixture()
+  const deadline = new AbortController()
+  setTimeout(() => deadline.abort(new Error("review deadline of 1s reached")), 20)
+
+  await assert.rejects(
+    runReview(
+      options(github.client, workspace, { actionMode: "live", signal: deadline.signal }),
+      // Like pi over ACP, a slow Agent turn ends only when its run is cancelled.
+      () =>
+        new DeterministicAgentProvider({
+          respond: (_request, context) =>
+            new Promise((_resolve, reject) => {
+              const cancel = () => reject(context.signal.reason)
+              if (context.signal.aborted) {
+                cancel()
+              } else {
+                context.signal.addEventListener("abort", cancel, { once: true })
+              }
+            })
+        })
+    ),
+    error => error instanceof ReviewUnavailableError
+  )
   assert.deepEqual(github.writes, [])
 })
 
