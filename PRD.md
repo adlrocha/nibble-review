@@ -97,7 +97,7 @@ The workflow's 40-minute process ceiling is a stuck-provider safety boundary, no
 
 ## Operations and evaluation
 
-Production uses pi with opencode-go/deepseek-v4-flash by default and opencode-go/minimax-m3 as its fallback. pi runs with project resources disabled and an allowlisted environment. The model and maximum Agent concurrency are selected once at the runtime edge.
+Production uses pi with opencode-go/deepseek-v4.1-flash by default and opencode-go/minimax-m3 as its fallback. pi runs with project resources disabled and an allowlisted environment. The model and maximum Agent concurrency are selected once at the runtime edge.
 
 Every eval capture preserves the raw typed result, provider/model identity, immutable reviewer revision, exact PR revisions, judge views, timing, usage, and completion state. Exit zero alone is insufficient; required artifacts and a complete typed review must exist before judgment or cache promotion.
 

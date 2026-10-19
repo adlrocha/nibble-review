@@ -8,7 +8,7 @@ export default {
   keepScratch: false,
   // Model comparisons remain opt-in CLI runs so the committed matrix stays
   // a small, predictable low-cost baseline.
-  models: ["opencode-go/deepseek-v4-flash"],
+  models: ["opencode-go/deepseek-v4.1-flash"],
   input: [
     {
       pr: "https://github.com/vercel/next.js/pull/31936",
@@ -27,7 +27,7 @@ export default {
     },
   ],
   judge: {
-    model: "opencode-go/deepseek-v4-flash",
+    model: "opencode-go/deepseek-v4.1-flash",
     timeoutMs: 120_000,
   },
 }

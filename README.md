@@ -2,7 +2,7 @@
 
 An AI pull-request reviewer you add to any repository with one workflow file and one secret. It reads the code around a diff, gives the change to six focused reviewers, audits their findings, and publishes one GitHub review.
 
-It runs entirely inside your GitHub Actions job: no GitHub App, no container image, no server. Agents run through [pi](https://pi.dev), so any model pi supports works, and the default ([OpenCode Go](https://opencode.ai/docs/go/) DeepSeek V4 Flash) measured **$0.12–$0.18 per full review** at pi catalog rates on our first test PRs.
+It runs entirely inside your GitHub Actions job: no GitHub App, no container image, no server. Agents run through [pi](https://pi.dev), so any model pi supports works, and the default ([OpenCode Go](https://opencode.ai/docs/go/) DeepSeek V4.1 Flash) — whose predecessor, DeepSeek V4 Flash, measured **$0.12–$0.18 per full review** at pi catalog rates on our first test PRs.
 
 ```yaml
 - uses: adlrocha/nibble-review@v1
@@ -129,7 +129,7 @@ Models investigate and write. They do not decide which commit was reviewed, whet
 | --- | --- | --- |
 | `api-key` | required | Model provider key. Pass it from a secret. |
 | `api-key-env` | `OPENCODE_API_KEY` | Variable pi reads the key from, e.g. `ANTHROPIC_API_KEY` or `OPENAI_API_KEY`. Must end in `_API_KEY`. |
-| `model` | `opencode-go/deepseek-v4-flash` | pi model as `provider/model`. Run `pi --list-models` to see what is available. |
+| `model` | `opencode-go/deepseek-v4.1-flash` | pi model as `provider/model`. Run `pi --list-models` to see what is available. |
 | `fallback-model` | `opencode-go/minimax-m3` | Retried once when the primary model fails before anything is published. Empty disables the retry. |
 | `github-token` | `${{ github.token }}` | Token used to read the PR and publish the review. |
 | `app-client-id`, `app-private-key` | empty | Optional GitHub App credentials; reviews then post as the App's bot. |

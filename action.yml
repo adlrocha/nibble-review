@@ -16,7 +16,7 @@ inputs:
   model:
     description: pi model as provider/model.
     required: false
-    default: opencode-go/deepseek-v4-flash
+    default: opencode-go/deepseek-v4.1-flash
   fallback-model:
     description: Model retried once when the primary model fails before anything is published. Empty disables the retry.
     required: false

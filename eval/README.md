@@ -73,7 +73,7 @@ The committed [config.ts](config.ts) contains a small public example. Private an
 ```ts
 export default {
   concurrency: 1,
-  models: ["opencode-go/deepseek-v4-flash"],
+  models: ["opencode-go/deepseek-v4.1-flash"],
   input: [
     {
       pr: "owner/repository/123",
@@ -84,7 +84,7 @@ export default {
     }
   ],
   judge: {
-    model: "opencode-go/deepseek-v4-flash",
+    model: "opencode-go/deepseek-v4.1-flash",
     timeoutMs: 300_000
   }
 }
@@ -102,7 +102,7 @@ Run one known PR through the current reviewer before spending a full corpus:
 npm run eval -- \
   --no-config-input \
   --pr trpc/trpc/7262 \
-  --model opencode-go/deepseek-v4-flash \
+  --model opencode-go/deepseek-v4.1-flash \
   --concurrency 1 \
   --out eval/runs/canary \
   --force
@@ -119,7 +119,7 @@ Inspect the generated review and completion evidence before starting a matrix. A
 ```bash
 npm run eval -- \
   --config eval/config.local.ts \
-  --model opencode-go/deepseek-v4-flash \
+  --model opencode-go/deepseek-v4.1-flash \
   --out eval/runs/current-deepseek \
   --force
 ```
@@ -175,7 +175,7 @@ Run every model in a comparison from the same reviewer revision:
 ```bash
 npm run eval -- \
   --config eval/config.local.ts \
-  --model opencode-go/deepseek-v4-flash \
+  --model opencode-go/deepseek-v4.1-flash \
   --out eval/runs/current-deepseek \
   --force
 
