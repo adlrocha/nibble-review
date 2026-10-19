@@ -5,6 +5,7 @@ import test from "node:test"
 
 import { createEgressProxy, isAllowed, parseAuthority } from "../dist/sandbox/egress-proxy.js"
 import { modelApiHost } from "../dist/sandbox/model-host.js"
+import { DEFAULT_REVIEW_MODEL } from "../dist/config.js"
 
 function listen(server) {
   return new Promise(resolve => server.listen(0, "127.0.0.1", () => resolve(server.address().port)))
@@ -83,7 +84,7 @@ test("the proxy tunnels to an allowed host and refuses everything else", async t
 })
 
 test("model hosts come from pi's catalog and unknown models fail loudly", () => {
-  assert.equal(modelApiHost("opencode-go/deepseek-v4-flash"), "opencode.ai")
+  assert.equal(modelApiHost(DEFAULT_REVIEW_MODEL), "opencode.ai")
   assert.equal(modelApiHost("anthropic/claude-haiku-5-5"), "api.anthropic.com")
   assert.throws(() => modelApiHost("deepseek-v4-flash"), /provider\/model/u)
   assert.throws(() => modelApiHost("nope/not-a-model"), /egress-allow/u)
