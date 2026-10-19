@@ -5,7 +5,7 @@ import { builtinModels } from "@earendil-works/pi-ai/providers/all"
  * the sandbox allowlist follows the configured model instead of a hardcoded list.
  *
  * @example
- * modelApiHost("opencode-go/deepseek-v4-flash") // "opencode.ai"
+ * modelApiHost("opencode-go/deepseek-v4.1-flash") // "opencode.ai"
  */
 export function modelApiHost(model: string): string {
   const slash = model.indexOf("/")
