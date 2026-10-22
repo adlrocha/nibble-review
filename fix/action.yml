@@ -59,7 +59,7 @@ inputs:
   sandbox-image:
     description: Container image for the Agent and verify commands; it needs node and the repository's toolchain.
     required: false
-    default: node:26-bookworm
+    default: node:26.12.1-bookworm
   egress-allow:
     description: Comma-separated hosts the sandbox may reach. Empty derives the model API hosts from pi's catalog.
     required: false
