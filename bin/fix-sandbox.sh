@@ -11,7 +11,7 @@
 # Environment:
 #   SANDBOX_ENGINE   docker (default) or podman
 #   SANDBOX_ID       unique id for this job's network and proxy (required)
-#   SANDBOX_IMAGE    image with node and the repository's toolchain (default node:26-bookworm)
+#   SANDBOX_IMAGE    image with node and the repository's toolchain (default node:26.12.1-bookworm)
 #   SANDBOX_ALLOW    comma-separated hosts the proxy may reach (required for up)
 #   SANDBOX_ENV      space-separated variable names passed into run (values are never printed)
 #   WORKSPACE        repository checkout, mounted read-write; its .git is mounted read-only
@@ -21,7 +21,7 @@ set -euo pipefail
 
 engine="${SANDBOX_ENGINE:-docker}"
 [[ "$engine" == docker || "$engine" == podman ]] || { echo "fix-sandbox: SANDBOX_ENGINE must be docker or podman" >&2; exit 1; }
-image="${SANDBOX_IMAGE:-node:26-bookworm}"
+image="${SANDBOX_IMAGE:-node:26.12.1-bookworm}"
 id="${SANDBOX_ID:?SANDBOX_ID is required}"
 [[ "$id" =~ ^[A-Za-z0-9_.-]+$ ]] || { echo "fix-sandbox: invalid SANDBOX_ID" >&2; exit 1; }
 network="nibble-fix-${id}"
