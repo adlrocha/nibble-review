@@ -30,7 +30,7 @@
   },
   "dependencies": {
     "@aml-jsx/sdk": "0.8.1",
-    "@earendil-works/pi-coding-agent": "1.1.0",
+    "@earendil-works/pi-coding-agent": "1.5.0",
     "@octokit/rest": "^22.0.0",
     "pi-acp": "0.0.34",
     "pi-mcp-adapter": "5.2.0",
