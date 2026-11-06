@@ -67,6 +67,12 @@ inputs:
     required: false
     default: "20"
 
+  land:
+    description: >-
+      Report whether each pull-request head could merge without a person, as a "## Risk" comment and a nibble-review/land commit status. Reads .nibble/sdlc.toml from the default branch and needs the statuses:write permission. Advisory only: it never merges or blocks.
+    required: false
+    default: "false"
+
 outputs:
   should-review:
     description: Whether preflight accepted this event.
@@ -136,6 +142,7 @@ runs:
         permission-contents: read
         permission-issues: write
         permission-pull-requests: write
+        permission-statuses: ${{ inputs.land == 'true' && 'write' || '' }}
 
     - name: Check out pull request
       if: steps.preflight.outputs.should_review == 'true'
@@ -164,6 +171,7 @@ runs:
         REVIEW_FALLBACK_MODEL: ${{ inputs.fallback-model }}
         REVIEW_THINKING_LEVEL: ${{ inputs.thinking-level }}
         REVIEW_EMOJIS: ${{ inputs.emojis }}
+        REVIEW_LAND: ${{ inputs.land }}
         PR_NUMBER: ${{ inputs.pr-number }}
         TRIGGER_COMMENT_ID: ${{ inputs.trigger-comment-id }}
         API_KEY: ${{ inputs.api-key }}
@@ -173,3 +181,14 @@ runs:
         export "$API_KEY_ENV=$API_KEY"
         unset API_KEY
         bash "$GITHUB_ACTION_PATH/bin/review-with-fallback.sh"
+
+    - name: Report land decision
+      if: steps.preflight.outputs.should_review == 'true' && inputs.land == 'true'
+      shell: bash
+      env:
+        GH_TOKEN: ${{ steps.app-token.outputs.token || inputs.github-token }}
+        REVIEW_BOT_LOGIN: ${{ steps.app-token.outputs.app-slug && format('{0}[bot]', steps.app-token.outputs.app-slug) || 'github-actions[bot]' }}
+        REVIEW_COMMAND: ${{ inputs.command }}
+        PR_NUMBER: ${{ inputs.pr-number }}
+        TRIGGER_COMMENT_ID: ${{ inputs.trigger-comment-id }}
+      run: node "$GITHUB_ACTION_PATH/dist/cli/land.js" --publish

@@ -62,6 +62,11 @@ type MutableDiffFile = {
   leftLines: Set<number>
 }
 
+/** True for lockfiles the reviewer treats as machine noise, wherever they live. */
+export function isIgnoredLockfile(path: string): boolean {
+  return IGNORED_LOCKFILES.has(posix.basename(path).toLowerCase())
+}
+
 /**
  * Owns the two deterministic diff policies the reviewer needs: removing
  * generated/binary noise from model context and calculating valid GitHub
@@ -117,7 +122,7 @@ export class ReviewDiff {
     const ignored = new Set<string>()
     const kept = blocks.filter(block => {
       const paths = ReviewDiff.paths(block)
-      const lockfiles = paths.filter(path => IGNORED_LOCKFILES.has(posix.basename(path).toLowerCase()))
+      const lockfiles = paths.filter(isIgnoredLockfile)
       const binary = block.some(line => line === "GIT binary patch" || line.startsWith("Binary files "))
       if (lockfiles.length === 0 && !binary) {
         return true

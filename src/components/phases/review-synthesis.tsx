@@ -6,7 +6,8 @@ import {
   isComparableReviewDelta,
   MAX_REVIEW_DELTA_EVIDENCE_CHARS
 } from "../../lib/review-gate.js"
-import type { ReviewFinding } from "../../lib/review-queue.js"
+import { WHERE_TO_LOOK_HEADING } from "../../lib/land.js"
+import { reviewVerdict, type ReviewFinding } from "../../lib/review-queue.js"
 import { REVIEW_POLICY_INCLUDE_LIMIT_BYTES } from "../../prompt-limits.js"
 import { ReviewContextPrompt } from "../context/prompt.js"
 import { useReviewContext } from "../context/review-context.js"
@@ -29,12 +30,20 @@ const SinceLastReviewSchema = SummarySchema.nullable()
     "A concise comparison with the previous review, including a material direction change. Return a value only for a complete ancestor_diff or rebase_compare; otherwise return null."
   )
 
+const WhereToLookSchema = z
+  .array(z.string().trim().min(1).max(300))
+  .max(5)
+  .nullable()
+  .default(null)
+  .describe("Null unless the policy asks for this list.")
+
 const SynthesisSchema = z
   .object({
     direct_answer: z.string().trim().min(1).max(2_000).nullable(),
     summary: SummarySchema,
     since_last_review: SinceLastReviewSchema,
-    recommendation: RecommendationSchema.nullable()
+    recommendation: RecommendationSchema.nullable(),
+    where_to_look: WhereToLookSchema
   })
   .strict()
 
@@ -59,9 +68,10 @@ function primaryFinding(findings: ReviewFinding[]): ReviewFinding | null {
 
 type SynthesisAgentProps = AML.PropsWithRequiredChildren<{
   readonly evidence: unknown
+  readonly land: boolean
 }>
 
-const SynthesisAgent: AML.Component<SynthesisAgentProps> = ({ children, evidence }) => {
+const SynthesisAgent: AML.Component<SynthesisAgentProps> = ({ children, evidence, land }) => {
   return (
     <Agent
       name="review-synthesis"
@@ -70,6 +80,9 @@ const SynthesisAgent: AML.Component<SynthesisAgentProps> = ({ children, evidence
     >
       <Block tag="synthesis-policy">
         <Include src="./instructions/synthesis.md" maxBytes={REVIEW_POLICY_INCLUDE_LIMIT_BYTES} title={false} />
+        {land ? (
+          <Include src="./instructions/where-to-look.md" maxBytes={REVIEW_POLICY_INCLUDE_LIMIT_BYTES} title={false} />
+        ) : null}
       </Block>
       <Block tag="audit-handoff">
         The validated audit handoff resolves below before synthesis starts. Treat it as explanatory context; the
@@ -87,22 +100,6 @@ const SynthesisAgent: AML.Component<SynthesisAgentProps> = ({ children, evidence
   )
 }
 
-function verdict(findings: ReviewFinding[]): "⛔ Block" | "⚠️ Request changes" | "✅ LGTM" {
-  if (
-    findings.some(
-      finding => finding.kind === "blocker" || (finding.kind === "inline" && finding.severity === "critical")
-    )
-  ) {
-    return "⛔ Block"
-  }
-  if (findings.some(finding => finding.kind === "inline" && finding.severity !== "nit")) {
-    return "⚠️ Request changes"
-  }
-  // Notes are advisory: they render in their own section but never determine
-  // merge readiness. Only a retained blocker hijacks the verdict below.
-  return "✅ LGTM"
-}
-
 /** Resolves audit, finalizes its queue, and returns the composed author-facing review body. */
 type ReviewSynthesisProps = AML.PropsWithRequiredChildren
 
@@ -111,7 +108,7 @@ export const ReviewSynthesis: AML.Component<ReviewSynthesisProps> = async ({ chi
   const auditHandoff = await evaluate(children)
   const lanes = review.queue.completed()
   const validated = review.queue.finalize()
-  const finalVerdict = verdict(validated.findings)
+  const finalVerdict = reviewVerdict(validated.findings)
   // Manual reviews bypass gate comparison, while follow-up gates may escalate.
   // Rebuild from the immutable snapshot so synthesis owns the evidence it publishes.
   const comparison = compareReviewHistory(review.snapshot, review.github.request.workspace)
@@ -124,6 +121,7 @@ export const ReviewSynthesis: AML.Component<ReviewSynthesisProps> = async ({ chi
   )
   const synthesis = await evaluate(
     <SynthesisAgent
+      land={review.github.request.land === true}
       evidence={{
         lane_assessments: lanes,
         review_iteration: {
@@ -171,6 +169,7 @@ export const ReviewSynthesis: AML.Component<ReviewSynthesisProps> = async ({ chi
   const sinceLastReview = canUseSinceLastReview ? synthesis.since_last_review : null
   const summary = sinceLastReview || synthesis.summary
   const summaryHeading = sinceLastReview ? "Since last review" : "Review Summary"
+  const whereToLook = review.github.request.land ? synthesis.where_to_look : null
   return (
     <>
       {directAnswer ? <Block>{directAnswer}</Block> : null}
@@ -192,6 +191,12 @@ export const ReviewSynthesis: AML.Component<ReviewSynthesisProps> = async ({ chi
         <>
           ## 📝 Review notes
           <Block>{notes.map(finding => `- ${finding.body}`).join("\n")}</Block>
+        </>
+      ) : null}
+      {whereToLook && whereToLook.length > 0 ? (
+        <>
+          {WHERE_TO_LOOK_HEADING}
+          <Block>{whereToLook.map(item => `- ${item}`).join("\n")}</Block>
         </>
       ) : null}
       ## Verdict

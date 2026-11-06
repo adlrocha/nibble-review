@@ -15,7 +15,7 @@ Nibble Review provides actionable, evidence-backed pull-request review with the 
 
 ## Non-goals
 
-- Automatic merge or approval.
+- Automatic merge or approval by the reviewer. Land reports whether a head could merge without a person, and it never merges or blocks.
 - Review of fork code with repository secrets.
 - A second full-PR investigation during audit or synthesis.
 - Comment quotas, forced findings, or severity inflation to satisfy a score.
@@ -85,6 +85,8 @@ Replies to existing inline threads remain inline replies. Top-level questions or
 - Prepared GitHub writes are idempotent within a run.
 - An ambiguous mutation outcome is recorded and never replayed.
 - Dry run is the default CLI mode; live mutation requires --publish.
+- Land is advisory and separate from review publication: it runs after publication with no model, writes only a replaceable `## Risk` comment and a per-commit status, and its failures are warnings.
+- A verdict record counts only at the end of a body this reviewer wrote, and publication strips land's markers from model text.
 
 The workflow's 40-minute process ceiling is a stuck-provider safety boundary, not an expected review duration. Performance is measured separately in evals.
 

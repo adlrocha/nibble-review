@@ -138,6 +138,7 @@ Models investigate and write. They do not decide which commit was reviewed, whet
 | `allow-skip` | `true` | Honor `[skip]` titles and `@nibble-review skip` body lines from trusted human authors. Set `false` when the review check is required for merging. |
 | `install-dependencies` | `false` | Install the repository's npm/pnpm/yarn dependencies first. Runs their install scripts. |
 | `emojis` | `true` | Prefix inline comments with severity emojis. |
+| `land` | `false` | Report whether each head could merge without a person. See [Land](#land). |
 | `timeout-minutes` | `20` | Upper bound for each review attempt. |
 
 Use another provider by changing two inputs:
@@ -154,6 +155,42 @@ Use another provider by changing two inputs:
 If you change `command`, change the mention in your workflow's `if:` filter to match.
 
 A review that has published nothing a minute before `timeout-minutes` gives up and hands over to the fallback model, so a slow primary model doesn't fail the check. Publication failures, and timeouts after publishing has started, never trigger the fallback, because their GitHub mutation outcome may be ambiguous. The job's own `timeout-minutes` should cover two attempts (the example uses 45). Each run writes a job summary with the model, Agent turns, token usage, estimated cost (from pi's model catalog, not a reconciled bill), comment counts, and publication status.
+
+## Land
+
+Land answers one question for each pull-request head: could this exact commit merge without a person? It's off unless a workflow sets `land: "true"`, and it runs after the review as a separate step with no model. The commit status also needs `statuses: write`; without it you still get the comment, plus a warning. **Land never merges or blocks anything.** It only reports, so a failure is a warning, and removing the input turns it all off.
+
+```yaml
+- uses: adlrocha/nibble-review@v1
+  with:
+    api-key: ${{ secrets.OPENCODE_API_KEY }}
+    land: "true"
+```
+
+Each run updates one `## Risk` comment and posts a `nibble-review/land` commit status, which is always `success`. The review also gains a `## Where to look` list, and a hidden record of the verdict for its commit.
+
+Land counts only reviews published since it was enabled, because older ones have no verdict record. A pull request already open at that point reports "no full review" until its next full review.
+
+A head would need a person when any of these hold:
+
+- it has no LGTM on that exact commit, the pull request has never had a full review, or the last full review blocked it and nothing but a fast-track came after;
+- a bot or App opened the pull request;
+- it has more review rounds than `max_review_rounds`;
+- it has more changed lines than `max_lines`, not counting docs, tests, or generated files;
+- it touches an always-human path: `.github/`, `.nibble/`, database migrations, the manifests and lockfiles of common package managers, or anything in `always_human`;
+- it removes a test file or assertions, or adds a skip or focus marker, in common test layouts;
+- a thread this reviewer opened is unresolved, or a critical finding was closed without its code changing. Other findings may be closed by a reply, because the reviewer can be wrong.
+
+Settings live in the `[land]` table of `.nibble/sdlc.toml`, read from the default branch so a pull request can't relax its own rules. Every setting is optional, and other tables belong to other tools:
+
+```toml
+[land]
+mode = "shadow"          # "off" stops the comment and status; remove the land input to stop the rest
+main_is_staging = false  # shown in the Risk comment; changes no rule yet
+max_lines = 400
+max_review_rounds = 5
+always_human = ["src/auth/**"]
+```
 
 ## Fixer (experimental)
 
