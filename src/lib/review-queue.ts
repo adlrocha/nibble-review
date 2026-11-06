@@ -642,3 +642,22 @@ export class ReviewQueue {
     }
   }
 }
+
+export type ReviewVerdictLabel = "⛔ Block" | "⚠️ Request changes" | "✅ LGTM"
+
+/** Derives the one verdict from retained findings; no model chooses it. */
+export function reviewVerdict(findings: ReviewFinding[]): ReviewVerdictLabel {
+  if (
+    findings.some(
+      finding => finding.kind === "blocker" || (finding.kind === "inline" && finding.severity === "critical")
+    )
+  ) {
+    return "⛔ Block"
+  }
+  if (findings.some(finding => finding.kind === "inline" && finding.severity !== "nit")) {
+    return "⚠️ Request changes"
+  }
+  // Notes are advisory: they render in their own section but never determine
+  // merge readiness. Only a retained blocker hijacks the verdict.
+  return "✅ LGTM"
+}

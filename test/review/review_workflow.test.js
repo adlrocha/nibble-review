@@ -691,11 +691,16 @@ test("land adds where to look and a verdict record only when the repository opte
   }
   const plain = await runReview(reviewOptions(t, fakeGitHub().client), () => reviewProvider({ synthesis }))
   assert.doesNotMatch(plain.body, /Where to look|nibble-review:verdict/u)
+  const silent = reviewProvider({ synthesis })
+  await runReview(reviewOptions(t, fakeGitHub().client), () => silent)
+  const promptOf = provider =>
+    provider.calls.find(call => call.request.system.includes("concise pull-request review summary")).request.prompt
+  assert.doesNotMatch(promptOf(silent), /where_to_look/u)
 
   const base = reviewOptions(t, fakeGitHub().client)
-  const result = await runReview({ ...base, request: { ...base.request, land: true } }, () =>
-    reviewProvider({ synthesis })
-  )
+  const asked = reviewProvider({ synthesis })
+  const result = await runReview({ ...base, request: { ...base.request, land: true } }, () => asked)
+  assert.match(promptOf(asked), /where_to_look/u)
   assert.equal(parseWhereToLook(result.body), "- `src/app.ts:4`: does the retry stop on cancel?")
   assert.deepEqual(parseVerdictMarker(result.body), {
     sha: base.request.workspaceHeadSha,

@@ -3,6 +3,9 @@ import { matchesGlob } from "node:path"
 import { parse as parseToml } from "smol-toml"
 import { z } from "zod"
 
+import { REVIEW_MARKER } from "./review-authorship.js"
+import type { ReviewVerdictLabel } from "./review-queue.js"
+
 /** Commit status context that carries the land decision for one pull-request head. */
 export const LAND_STATUS_CONTEXT = "nibble-review/land"
 
@@ -35,7 +38,18 @@ export const BUILT_IN_ALWAYS_HUMAN: readonly string[] = [
   "**/poetry.lock",
   "**/uv.lock",
   "**/Gemfile",
-  "**/Gemfile.lock"
+  "**/Gemfile.lock",
+  "**/Pipfile",
+  "**/Pipfile.lock",
+  "**/bun.lock",
+  "**/bun.lockb",
+  "**/composer.json",
+  "**/composer.lock",
+  "**/pom.xml",
+  "**/build.gradle",
+  "**/build.gradle.kts",
+  "**/mix.exs",
+  "**/mix.lock"
 ]
 
 const LandSettingsSchema = z
@@ -50,14 +64,8 @@ const LandSettingsSchema = z
   })
   .strict()
 
-const MergeSettingsSchema = z.object({ method: z.enum(["squash", "merge", "rebase"]).default("squash") }).strict()
-
-const SdlcConfigSchema = z
-  .object({
-    land: LandSettingsSchema.prefault({}),
-    merge: MergeSettingsSchema.prefault({})
-  })
-  .strict()
+// Other tables in the file belong to other tools, such as `nibble sdlc`, so only [land] is checked.
+const SdlcConfigSchema = z.object({ land: LandSettingsSchema.prefault({}) })
 
 export type SdlcConfig = z.infer<typeof SdlcConfigSchema>
 export type LandVerdict = "lgtm" | "request-changes" | "block"
@@ -105,6 +113,12 @@ export type LandDecision = {
   rounds: number
 }
 
+/** A "where to look" list and the commit it was written for, when known. */
+export type WhereToLook = {
+  list: string
+  sha: string | null
+}
+
 /** Parses `.nibble/sdlc.toml`; a missing file means the defaults. */
 export function parseSdlcConfig(text: string | null): SdlcConfig {
   try {
@@ -114,17 +128,29 @@ export function parseSdlcConfig(text: string | null): SdlcConfig {
   }
 }
 
+const VERDICT_RECORD =
+  /<!-- nibble-review:verdict sha=([0-9a-f]{40}) verdict=(lgtm|request-changes|block) kind=(full|delta) -->$/u
+
 /** Renders the application-owned record land trusts, for the very end of a published body. */
 export function verdictMarker(record: VerdictRecord): string {
   return `<!-- nibble-review:verdict sha=${record.sha} verdict=${record.verdict} kind=${record.kind} -->`
 }
 
-/** Maps the rendered verdict label to its machine-readable name. */
-export function landVerdict(label: string): LandVerdict {
-  if (label.includes("LGTM")) {
-    return "lgtm"
-  }
-  return label.includes("Block") ? "block" : "request-changes"
+/** Machine-readable name of each verdict the application can render. */
+export const LAND_VERDICTS: Readonly<Record<ReviewVerdictLabel, LandVerdict>> = {
+  "✅ LGTM": "lgtm",
+  "⚠️ Request changes": "request-changes",
+  "⛔ Block": "block"
+}
+
+/**
+ * Removes anything shaped like a verdict record from model-written text.
+ *
+ * Publication runs this before appending its own record, so the only record a
+ * published body can end with is one the application wrote.
+ */
+export function stripVerdictRecords(text: string): string {
+  return text.replace(/<!--\s*nibble-review:verdict[\s\S]*?-->/gu, "")
 }
 
 /**
@@ -134,10 +160,9 @@ export function landVerdict(label: string): LandVerdict {
  * the body, so a fake record copied into a summary is ignored.
  */
 export function parseVerdictMarker(body: string): VerdictRecord | null {
-  const match =
-    /<!-- nibble-review:verdict sha=([0-9a-f]{40}) verdict=(lgtm|request-changes|block) kind=(full|delta) -->\s*(?:<!-- nibble-review -->\s*)?$/u.exec(
-      body
-    )
+  const trimmed = body.trimEnd()
+  const tail = trimmed.endsWith(REVIEW_MARKER) ? trimmed.slice(0, -REVIEW_MARKER.length).trimEnd() : trimmed
+  const match = VERDICT_RECORD.exec(tail)
   if (!match) {
     return null
   }
@@ -212,7 +237,10 @@ function isCritical(body: string): boolean {
 export function evaluateLand(input: LandInput): LandDecision {
   const { config, files, headSha, records, threads } = input
   const reasons: string[] = []
-  const onHead = records.filter(record => record.sha === headSha).at(-1)
+  // A full review outranks a fast-track of the same commit: the fast-track path
+  // says LGTM for any head it has seen, including one a full review blocked.
+  const forHead = records.filter(record => record.sha === headSha)
+  const onHead = forHead.filter(record => record.kind === "full").at(-1) ?? forHead.at(-1)
 
   if (input.authorIsBot) {
     reasons.push("opened by a bot or App")
@@ -266,7 +294,7 @@ export function renderRiskComment(options: {
   headSha: string
   decision: LandDecision
   config: SdlcConfig
-  whereToLook: string | null
+  whereToLook: WhereToLook | null
 }): string {
   const { config, decision, headSha, whereToLook } = options
   const lines = [
@@ -283,7 +311,8 @@ export function renderRiskComment(options: {
     lines.push("", "**Why it needs you**", "", ...decision.reasons.map(reason => `- ${reason}`))
   }
   if (whereToLook) {
-    lines.push("", "**Where to look**", "", whereToLook)
+    const stale = whereToLook.sha === headSha ? "" : ` (from the review of ${whereToLook.sha ?? "an earlier commit"})`
+    lines.push("", `**Where to look**${stale}`, "", whereToLook.list)
   }
   return lines.join("\n")
 }

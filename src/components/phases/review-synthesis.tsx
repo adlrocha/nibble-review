@@ -7,7 +7,7 @@ import {
   MAX_REVIEW_DELTA_EVIDENCE_CHARS
 } from "../../lib/review-gate.js"
 import { WHERE_TO_LOOK_HEADING } from "../../lib/land.js"
-import type { ReviewFinding } from "../../lib/review-queue.js"
+import { reviewVerdict, type ReviewFinding } from "../../lib/review-queue.js"
 import { REVIEW_POLICY_INCLUDE_LIMIT_BYTES } from "../../prompt-limits.js"
 import { ReviewContextPrompt } from "../context/prompt.js"
 import { useReviewContext } from "../context/review-context.js"
@@ -68,9 +68,10 @@ function primaryFinding(findings: ReviewFinding[]): ReviewFinding | null {
 
 type SynthesisAgentProps = AML.PropsWithRequiredChildren<{
   readonly evidence: unknown
+  readonly land: boolean
 }>
 
-const SynthesisAgent: AML.Component<SynthesisAgentProps> = ({ children, evidence }) => {
+const SynthesisAgent: AML.Component<SynthesisAgentProps> = ({ children, evidence, land }) => {
   return (
     <Agent
       name="review-synthesis"
@@ -79,6 +80,9 @@ const SynthesisAgent: AML.Component<SynthesisAgentProps> = ({ children, evidence
     >
       <Block tag="synthesis-policy">
         <Include src="./instructions/synthesis.md" maxBytes={REVIEW_POLICY_INCLUDE_LIMIT_BYTES} title={false} />
+        {land ? (
+          <Include src="./instructions/where-to-look.md" maxBytes={REVIEW_POLICY_INCLUDE_LIMIT_BYTES} title={false} />
+        ) : null}
       </Block>
       <Block tag="audit-handoff">
         The validated audit handoff resolves below before synthesis starts. Treat it as explanatory context; the
@@ -94,23 +98,6 @@ const SynthesisAgent: AML.Component<SynthesisAgentProps> = ({ children, evidence
       </Block>
     </Agent>
   )
-}
-
-/** Derives the one verdict from retained findings; no model chooses it. */
-export function reviewVerdict(findings: ReviewFinding[]): "⛔ Block" | "⚠️ Request changes" | "✅ LGTM" {
-  if (
-    findings.some(
-      finding => finding.kind === "blocker" || (finding.kind === "inline" && finding.severity === "critical")
-    )
-  ) {
-    return "⛔ Block"
-  }
-  if (findings.some(finding => finding.kind === "inline" && finding.severity !== "nit")) {
-    return "⚠️ Request changes"
-  }
-  // Notes are advisory: they render in their own section but never determine
-  // merge readiness. Only a retained blocker hijacks the verdict below.
-  return "✅ LGTM"
 }
 
 /** Resolves audit, finalizes its queue, and returns the composed author-facing review body. */
@@ -134,6 +121,7 @@ export const ReviewSynthesis: AML.Component<ReviewSynthesisProps> = async ({ chi
   )
   const synthesis = await evaluate(
     <SynthesisAgent
+      land={review.github.request.land === true}
       evidence={{
         lane_assessments: lanes,
         review_iteration: {

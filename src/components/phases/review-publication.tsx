@@ -1,13 +1,19 @@
 import type { AML } from "@aml-jsx/sdk"
 
-import { landVerdict, verdictMarker, type LandReviewKind, type LandVerdict } from "../../lib/land.js"
+import {
+  LAND_VERDICTS,
+  stripVerdictRecords,
+  verdictMarker,
+  type LandReviewKind,
+  type LandVerdict
+} from "../../lib/land.js"
+import { reviewVerdict } from "../../lib/review-queue.js"
 import { applyReviewBanner, enforceReviewBodyLimit } from "../../lib/render/review-body.js"
 import { serializeReviewPayload } from "../../services/github/review-serializer.js"
 import type { PublishedReview, ReviewDraft, ReviewRequest } from "../../types/review.js"
 import type { PublicationExpectation } from "../../services/github/actions.js"
 import { createGitHubWriteTools, type ReviewPublicationPlan } from "../../tools/github-write.js"
 import { useReviewContext } from "../context/review-context.js"
-import { reviewVerdict } from "./review-synthesis.js"
 
 /** Renders the verdict record for repositories that opted into land, and nothing otherwise. */
 function landRecord(request: ReviewRequest, verdict: LandVerdict, kind: LandReviewKind): string {
@@ -45,8 +51,8 @@ export const ReviewPublication: AML.Component = async () => {
 
   if (draft.status === "reviewed") {
     // The record goes after the length limit so truncation can never drop it.
-    const limited = enforceReviewBodyLimit(applyReviewBanner(draft.body, model))
-    const verdict = landVerdict(reviewVerdict(review.queue.finalize().findings))
+    const limited = enforceReviewBodyLimit(applyReviewBanner(stripVerdictRecords(draft.body), model))
+    const verdict = LAND_VERDICTS[reviewVerdict(review.queue.finalize().findings)]
     const body = `${limited}${landRecord(github.request, verdict, "full")}`
     const validated = { ...draft.validated, conclusion: body }
     const payload = serializeReviewPayload(validated)
@@ -56,7 +62,7 @@ export const ReviewPublication: AML.Component = async () => {
   } else {
     // A no-review decision is always an LGTM of the delta; an answer judges nothing.
     const record = draft.status === "no-review" ? landRecord(github.request, "lgtm", "delta") : ""
-    published = { ...draft, body: `${draft.body}${record}` }
+    published = { ...draft, body: `${stripVerdictRecords(draft.body)}${record}` }
     plan = { kind: "pr-comment", prNumber: github.request.prNumber, body: published.body }
     expectation = { kind: "pr-comment" }
   }

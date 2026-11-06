@@ -174,22 +174,19 @@ A head would need a person when any of these hold:
 - a bot or App opened the pull request;
 - it has more review rounds than `max_review_rounds`;
 - it has more changed lines than `max_lines`, not counting docs, tests, or generated files;
-- it touches an always-human path: `.github/`, `.nibble/`, migrations, dependency manifests and lockfiles, or anything in `always_human`;
+- it touches an always-human path: `.github/`, `.nibble/`, migrations, the manifests and lockfiles of common package managers, or anything in `always_human`;
 - it removes a test file or assertions, or adds a skip or focus marker;
 - a review thread is unresolved, or a critical finding was closed without its code changing. Other findings may be closed by a reply, because the reviewer can be wrong.
 
-Settings live in `.nibble/sdlc.toml`, read from the default branch so a pull request can't relax its own rules. Every setting is optional:
+Settings live in the `[land]` table of `.nibble/sdlc.toml`, read from the default branch so a pull request can't relax its own rules. Every setting is optional, and other tables belong to other tools:
 
 ```toml
 [land]
-mode = "shadow"          # or "off"
-main_is_staging = false  # true when main deploys to dev and a release deploys to production
+mode = "shadow"          # "off" stops the comment and status; remove the land input to stop the rest
+main_is_staging = false  # shown in the Risk comment; changes no rule yet
 max_lines = 400
 max_review_rounds = 5
 always_human = ["src/auth/**"]
-
-[merge]
-method = "squash"        # read by `nibble sdlc merge`
 ```
 
 ## Fixer (experimental)

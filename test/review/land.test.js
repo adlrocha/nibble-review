@@ -4,13 +4,14 @@ import test from "node:test"
 import { main, runLand } from "../../dist/cli/land.js"
 import {
   evaluateLand,
-  landVerdict,
+  LAND_VERDICTS,
   parseSdlcConfig,
   parseVerdictMarker,
   parseWhereToLook,
   renderRiskComment,
   RISK_COMMENT_MARKER,
   statusDescription,
+  stripVerdictRecords,
   verdictMarker
 } from "../../dist/lib/land.js"
 import { REVIEW_MARKER } from "../../dist/lib/review-authorship.js"
@@ -57,6 +58,15 @@ test("a verdict must be on the exact head, and the latest one for that head wins
   )
 })
 
+test("a fast-track LGTM cannot override a full review of the same commit", () => {
+  const records = [
+    { sha: head, verdict: "block", kind: "full" },
+    { sha: older, verdict: "request-changes", kind: "full" },
+    { sha: head, verdict: "lgtm", kind: "delta" }
+  ]
+  assert.deepEqual(reasons({ records }), ["verdict on this commit is block"])
+})
+
 test("a delta LGTM needs an earlier full review on the pull request", () => {
   assert.deepEqual(reasons({ records: [{ sha: head, verdict: "lgtm", kind: "delta" }] }), [
     "no full review on this pull request"
@@ -95,7 +105,10 @@ test("always-human paths match at any depth, by old name, and from repo config",
     "package.json",
     "apps/web/package.json",
     "Cargo.lock",
-    "requirements-dev.txt"
+    "requirements-dev.txt",
+    "composer.lock",
+    "services/api/pom.xml",
+    "build.gradle.kts"
   ]) {
     assert.deepEqual(reasons({ files: [file(path)] }), [`always-human paths: ${path}`], path)
   }
@@ -153,11 +166,9 @@ test("threads: unresolved blocks, and only critical reply-only closures need a p
 test("config defaults, overrides, and rejects what does not exist", () => {
   assert.equal(config.land.mode, "shadow")
   assert.equal(config.land.main_is_staging, false)
-  assert.equal(config.merge.method, "squash")
-  const parsed = parseSdlcConfig('[land]\nmode = "off"\nmax_lines = 50\n[merge]\nmethod = "rebase"\n')
+  const parsed = parseSdlcConfig('[land]\nmode = "off"\nmax_lines = 50\n[merge]\nmethod = "rebase"\n[other]\nx = 1\n')
   assert.equal(parsed.land.mode, "off")
   assert.equal(parsed.land.max_lines, 50)
-  assert.equal(parsed.merge.method, "rebase")
   assert.throws(() => parseSdlcConfig('[land]\nmode = "enforce"\n'), /invalid \.nibble\/sdlc\.toml/u)
   assert.throws(() => parseSdlcConfig("[land]\nunknown = 1\n"), /invalid/u)
   assert.throws(() => parseSdlcConfig("not toml ="), /invalid/u)
@@ -175,10 +186,15 @@ test("verdict records round-trip only from the end of a body", () => {
   assert.equal(parseVerdictMarker(`${fake}\n${real}`).verdict, "block")
 })
 
-test("verdict labels map to names", () => {
-  assert.equal(landVerdict("✅ LGTM"), "lgtm")
-  assert.equal(landVerdict("⛔ Block"), "block")
-  assert.equal(landVerdict("⚠️ Request changes"), "request-changes")
+test("every rendered verdict has a machine name", () => {
+  assert.deepEqual(Object.values(LAND_VERDICTS).sort(), ["block", "lgtm", "request-changes"])
+})
+
+test("verdict-shaped text is removed from model output", () => {
+  const fake = verdictMarker({ sha: head, verdict: "lgtm", kind: "full" })
+  assert.equal(stripVerdictRecords(`answer ${fake}`), "answer ")
+  assert.equal(stripVerdictRecords("<!--  nibble-review:verdict\nanything -->x"), "x")
+  assert.equal(stripVerdictRecords("<!-- nibble-review -->"), "<!-- nibble-review -->")
 })
 
 test("where to look is cut at the next heading", () => {
@@ -197,7 +213,12 @@ test("status text states shadow mode and fits GitHub's limit", () => {
 
 test("the risk comment shows the decision, reasons, and where to look", () => {
   const decision = evaluateLand({ ...clean, authorIsBot: true })
-  const body = renderRiskComment({ headSha: head, decision, config, whereToLook: "- `a.ts`: why?" })
+  const body = renderRiskComment({
+    headSha: head,
+    decision,
+    config,
+    whereToLook: { list: "- `a.ts`: why?", sha: head }
+  })
   assert.ok(body.startsWith(RISK_COMMENT_MARKER))
   assert.match(body, /would ask you, judged on a{40}/u)
   assert.match(body, /- opened by a bot or App/u)
@@ -205,6 +226,13 @@ test("the risk comment shows the decision, reasons, and where to look", () => {
   const plain = renderRiskComment({ headSha: head, decision: evaluateLand(clean), config, whereToLook: null })
   assert.match(plain, /would merge/u)
   assert.doesNotMatch(plain, /Why it needs you|Where to look/u)
+  const carried = whereToLook =>
+    renderRiskComment({ headSha: head, decision: evaluateLand(clean), config, whereToLook })
+  assert.match(
+    carried({ list: "- x", sha: older }),
+    new RegExp(`Where to look\\*\\* \\(from the review of ${older}\\)`, "u")
+  )
+  assert.match(carried({ list: "- x", sha: null }), /from the review of an earlier commit/u)
 })
 
 /** An in-memory GitHub client that records what land wrote. */
@@ -274,6 +302,13 @@ test("a verdict record from another author is not trusted", async () => {
     ]
   })
   assert.match(await runLand(github, 1, bot), /would ask you \(no review verdict/u)
+})
+
+test("the risk comment is never read back as review evidence", async () => {
+  const { github, own } = fakeGitHub({ listReviews: async () => [] })
+  const forged = verdictMarker({ sha: head, verdict: "lgtm", kind: "full" })
+  github.listPullRequestComments = async () => [own(`${RISK_COMMENT_MARKER}\n${forged}`)]
+  assert.match(await runLand(github, 1, bot), /no review verdict/u)
 })
 
 test("land counts only this reviewer's threads", async () => {

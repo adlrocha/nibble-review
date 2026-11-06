@@ -11,7 +11,8 @@ import {
   parseWhereToLook,
   renderRiskComment,
   RISK_COMMENT_MARKER,
-  statusDescription
+  statusDescription,
+  type WhereToLook
 } from "../lib/land.js"
 import { reviewAuthorship, type ReviewAuthorship } from "../lib/review-authorship.js"
 import {
@@ -33,6 +34,17 @@ function ownBodies(authorship: ReviewAuthorship, comments: IssueComment[], revie
   return dated
     .sort((left, right) => String(left.at ?? "").localeCompare(String(right.at ?? "")))
     .map(item => String(item.body ?? ""))
+}
+
+/** Finds the newest "where to look" list, remembering which commit it was written for. */
+function latestWhereToLook(bodies: string[]): WhereToLook | null {
+  for (const body of bodies.toReversed()) {
+    const list = parseWhereToLook(body)
+    if (list) {
+      return { list, sha: parseVerdictMarker(body)?.sha ?? null }
+    }
+  }
+  return null
 }
 
 /** Judges the current head and reports it. Never merges and never blocks. */
@@ -61,7 +73,8 @@ export async function runLand(github: GitHubClient, prNumber: number, botLogin: 
   }
 
   const authorship = reviewAuthorship(botLogin)
-  const bodies = ownBodies(authorship, comments, reviews)
+  // The risk comment is land's own output, so it never counts as review evidence.
+  const bodies = ownBodies(authorship, comments, reviews).filter(body => !body.includes(RISK_COMMENT_MARKER))
   const decision = evaluateLand({
     headSha,
     authorIsBot: pullRequest.user?.type === "Bot",
@@ -78,11 +91,7 @@ export async function runLand(github: GitHubClient, prNumber: number, botLogin: 
     config
   })
 
-  const whereToLook =
-    bodies
-      .map(parseWhereToLook)
-      .filter(list => list !== null)
-      .at(-1) ?? null
+  const whereToLook = latestWhereToLook(bodies)
   const body = renderRiskComment({ headSha, decision, config, whereToLook })
   const existing = comments.find(
     comment => authorship.isOwn(comment) && String(comment.body ?? "").includes(RISK_COMMENT_MARKER)
