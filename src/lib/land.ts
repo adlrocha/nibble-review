@@ -3,8 +3,9 @@ import { matchesGlob } from "node:path"
 import { parse as parseToml } from "smol-toml"
 import { z } from "zod"
 
+import type { PullRequestFile } from "../services/github/client.js"
 import { REVIEW_MARKER } from "./review-authorship.js"
-import type { ReviewVerdictLabel } from "./review-queue.js"
+import { inlineSeverityPrefix, type ReviewVerdictLabel } from "./review-queue.js"
 
 /** Commit status context that carries the land decision for one pull-request head. */
 export const LAND_STATUS_CONTEXT = "nibble-review/land"
@@ -78,16 +79,6 @@ export type VerdictRecord = {
   kind: LandReviewKind
 }
 
-export type LandFile = {
-  filename: string
-  previous_filename?: string | undefined
-  status: string
-  additions: number
-  deletions: number
-  changes: number
-  patch?: string | undefined
-}
-
 export type LandThread = {
   is_resolved: boolean
   is_outdated: boolean
@@ -99,7 +90,7 @@ export type LandInput = {
   headSha: string
   authorIsBot: boolean
   records: VerdictRecord[]
-  files: LandFile[]
+  files: PullRequestFile[]
   threads: LandThread[]
   config: SdlcConfig
 }
@@ -128,8 +119,9 @@ export function parseSdlcConfig(text: string | null): SdlcConfig {
   }
 }
 
-const VERDICT_RECORD =
-  /<!-- nibble-review:verdict sha=([0-9a-f]{40}) verdict=(lgtm|request-changes|block) kind=(full|delta) -->$/u
+const VERDICT_RECORD_SOURCE =
+  "<!-- nibble-review:verdict sha=([0-9a-f]{40}) verdict=(lgtm|request-changes|block) kind=(full|delta) -->"
+const FINAL_VERDICT_RECORD = new RegExp(`${VERDICT_RECORD_SOURCE}$`, "u")
 
 /** Renders the application-owned record land trusts, for the very end of a published body. */
 export function verdictMarker(record: VerdictRecord): string {
@@ -144,13 +136,14 @@ export const LAND_VERDICTS: Readonly<Record<ReviewVerdictLabel, LandVerdict>> = 
 }
 
 /**
- * Removes anything shaped like a verdict record from model-written text.
+ * Removes land's own markers from model-written text.
  *
  * Publication runs this before appending its own record, so the only record a
- * published body can end with is one the application wrote.
+ * published body can end with is one the application wrote. Only complete
+ * markers go: anything else can't be parsed, and it may be text the author wants.
  */
-export function stripVerdictRecords(text: string): string {
-  return text.replace(/<!--\s*nibble-review:verdict[\s\S]*?-->/gu, "")
+export function stripLandMarkers(text: string): string {
+  return text.replaceAll(new RegExp(VERDICT_RECORD_SOURCE, "gu"), "").replaceAll(RISK_COMMENT_MARKER, "")
 }
 
 /**
@@ -162,7 +155,7 @@ export function stripVerdictRecords(text: string): string {
 export function parseVerdictMarker(body: string): VerdictRecord | null {
   const trimmed = body.trimEnd()
   const tail = trimmed.endsWith(REVIEW_MARKER) ? trimmed.slice(0, -REVIEW_MARKER.length).trimEnd() : trimmed
-  const match = VERDICT_RECORD.exec(tail)
+  const match = FINAL_VERDICT_RECORD.exec(tail)
   if (!match) {
     return null
   }
@@ -180,10 +173,23 @@ export function parseWhereToLook(body: string): string | null {
   return (end < 0 ? rest : rest.slice(0, end)).trim() || null
 }
 
-const NOT_COUNTED =
-  /(^|\/)(docs?|tests?|__tests__|spec|fixtures|generated|dist)\/|\.(md|mdx|txt|snap)$|\.(test|spec)\.[^/]+$|_test\.[^/]+$|(^|\/)[^/]*\.lock$|-lock\.[^/]+$/iu
+const NOT_COUNTED = /(^|\/)(docs?|fixtures|generated|dist)\/|\.(md|mdx|txt|snap)$|(^|\/)[^/]*\.lock$|-lock\.[^/]+$/iu
 
-const TEST_FILE = /(^|\/)(tests?|__tests__|spec)\/|\.(test|spec)\.[^/]+$|_test\.[^/]+$/iu
+const TEST_PATH =
+  /(^|\/)(tests?|__tests__|spec)\/|\.(test|spec)\.[^/]+$|_test\.[^/]+$|(^|\/)(test_[^/]+|tests\.[^/]+)$/iu
+
+// Case-sensitive, or names like `latest.ts` would count as tests.
+const TEST_CLASS_FILE = /[a-z0-9]Tests?\.[^/]+$/u
+
+/** True for test files across common layouts, inside or outside a test directory. */
+function isTestFile(path: string): boolean {
+  return TEST_PATH.test(path) || TEST_CLASS_FILE.test(path)
+}
+
+/** Formats a path as a code span, so a file name can only ever render as text. */
+function codeSpan(path: string): string {
+  return `\`${path.replace(/[`\r\n]/gu, "?")}\``
+}
 
 const SKIP_MARKER =
   /\.(skip|only)\(|\b(xit|xdescribe|xtest)\(|#\[ignore|t\.Skip\(|pytest\.mark\.(skip|xfail)|@Disabled\b/u
@@ -191,41 +197,45 @@ const SKIP_MARKER =
 const ASSERTION = /\b(assert\w*|expect)\b/u
 
 /** Counts the changed lines that carry risk, leaving out docs, tests, and generated output. */
-function countedLines(files: LandFile[]): number {
-  return files.filter(file => !NOT_COUNTED.test(file.filename)).reduce((sum, file) => sum + file.changes, 0)
+function countedLines(files: PullRequestFile[]): number {
+  return files
+    .filter(file => !NOT_COUNTED.test(file.filename) && !isTestFile(file.filename))
+    .reduce((sum, file) => sum + file.changes, 0)
 }
 
 /** Lists the changed paths, old names included, that match an always-human pattern. */
-function alwaysHumanHits(files: LandFile[], extra: readonly string[]): string[] {
+function alwaysHumanHits(files: PullRequestFile[], extra: readonly string[]): string[] {
   const patterns = [...BUILT_IN_ALWAYS_HUMAN, ...extra]
   const paths = files.flatMap(file => [file.filename, ...(file.previous_filename ? [file.previous_filename] : [])])
   return [...new Set(paths.filter(path => patterns.some(pattern => matchesGlob(path, pattern))))].sort()
 }
 
 /** Describes how one test file got weaker, or null when it did not. */
-function testWeakening(file: LandFile): string | null {
-  if (!TEST_FILE.test(file.filename)) {
+function testWeakening(file: PullRequestFile): string | null {
+  if (!isTestFile(file.filename)) {
     return null
   }
   if (file.status === "removed") {
-    return `test file removed: ${file.filename}`
+    return `test file removed: ${codeSpan(file.filename)}`
   }
   if (file.changes > 0 && file.patch === undefined) {
-    return `test diff unavailable: ${file.filename}`
+    return `test diff unavailable: ${codeSpan(file.filename)}`
   }
   const lines = (file.patch ?? "").split("\n")
   const added = lines.filter(line => line.startsWith("+") && !line.startsWith("+++"))
   const removed = lines.filter(line => line.startsWith("-") && !line.startsWith("---"))
   if (added.some(line => SKIP_MARKER.test(line))) {
-    return `test skipped or focused: ${file.filename}`
+    return `test skipped or focused: ${codeSpan(file.filename)}`
   }
   const assertions = (changed: string[]) => changed.filter(line => ASSERTION.test(line)).length
-  return assertions(removed) > assertions(added) ? `assertions removed: ${file.filename}` : null
+  return assertions(removed) > assertions(added) ? `assertions removed: ${codeSpan(file.filename)}` : null
 }
 
 /** True when a reviewer finding was rendered at critical severity. */
 function isCritical(body: string): boolean {
-  return /^(?:\S+\s+)?\*\*critical:\*\*/u.test(body.trim())
+  const [first] = body.trim().split(/\s+/u, 2)
+  const prefix = inlineSeverityPrefix("critical")
+  return body.trim().startsWith(prefix) || body.trim().startsWith(`${first} ${prefix}`)
 }
 
 /**
@@ -263,7 +273,7 @@ export function evaluateLand(input: LandInput): LandDecision {
   }
   const hits = alwaysHumanHits(files, config.land.always_human)
   if (hits.length > 0) {
-    const shown = hits.slice(0, 5).join(", ")
+    const shown = hits.slice(0, 5).map(codeSpan).join(", ")
     reasons.push(`always-human paths: ${shown}${hits.length > 5 ? ` and ${hits.length - 5} more` : ""}`)
   }
   reasons.push(...files.map(testWeakening).filter(reason => reason !== null))
@@ -276,7 +286,9 @@ export function evaluateLand(input: LandInput): LandDecision {
   // outdated was closed by a reply alone, which is fine for anything else.
   for (const thread of threads) {
     if (thread.is_resolved && !thread.is_outdated && isCritical(thread.firstBody)) {
-      reasons.push(`critical finding closed without a code change: ${thread.path ?? "unknown path"}`)
+      reasons.push(
+        `critical finding closed without a code change: ${thread.path ? codeSpan(thread.path) : "unknown path"}`
+      )
     }
   }
 

@@ -557,7 +557,7 @@ export class ReviewQueue {
   /** Renders application-owned severity once in the eventual inline body. */
   private static authorComment(finding: Extract<ReviewFinding, { kind: "inline" }>, reviewEmojis: boolean): string {
     const emoji = reviewEmojis ? `${REVIEW_SEVERITY_EMOJI[finding.severity]} ` : ""
-    return `${emoji}**${finding.severity}:** ${finding.body}`
+    return `${emoji}${inlineSeverityPrefix(finding.severity)} ${finding.body}`
   }
 
   /** Preserves Markdown fences while avoiding accidental setext headings. */
@@ -641,6 +641,11 @@ export class ReviewQueue {
       throw new Error(`unknown or inactive review finding id: ${unknown.join(", ")}`)
     }
   }
+}
+
+/** The severity label an inline finding is published with, shared with land. */
+export function inlineSeverityPrefix(severity: string): string {
+  return `**${severity}:**`
 }
 
 export type ReviewVerdictLabel = "⛔ Block" | "⚠️ Request changes" | "✅ LGTM"

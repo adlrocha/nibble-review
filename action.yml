@@ -189,4 +189,4 @@ runs:
         GH_TOKEN: ${{ steps.app-token.outputs.token || inputs.github-token }}
         REVIEW_BOT_LOGIN: ${{ steps.app-token.outputs.app-slug && format('{0}[bot]', steps.app-token.outputs.app-slug) || 'github-actions[bot]' }}
         PR_NUMBER: ${{ inputs.pr-number }}
-      run: node "$GITHUB_ACTION_PATH/dist/cli/land.js"
+      run: node "$GITHUB_ACTION_PATH/dist/cli/land.js" --publish

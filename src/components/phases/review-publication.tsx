@@ -2,7 +2,7 @@ import type { AML } from "@aml-jsx/sdk"
 
 import {
   LAND_VERDICTS,
-  stripVerdictRecords,
+  stripLandMarkers,
   verdictMarker,
   type LandReviewKind,
   type LandVerdict
@@ -51,7 +51,7 @@ export const ReviewPublication: AML.Component = async () => {
 
   if (draft.status === "reviewed") {
     // The record goes after the length limit so truncation can never drop it.
-    const limited = enforceReviewBodyLimit(applyReviewBanner(stripVerdictRecords(draft.body), model))
+    const limited = enforceReviewBodyLimit(applyReviewBanner(stripLandMarkers(draft.body), model))
     const verdict = LAND_VERDICTS[reviewVerdict(review.queue.finalize().findings)]
     const body = `${limited}${landRecord(github.request, verdict, "full")}`
     const validated = { ...draft.validated, conclusion: body }
@@ -62,7 +62,7 @@ export const ReviewPublication: AML.Component = async () => {
   } else {
     // A no-review decision is always an LGTM of the delta; an answer judges nothing.
     const record = draft.status === "no-review" ? landRecord(github.request, "lgtm", "delta") : ""
-    published = { ...draft, body: `${stripVerdictRecords(draft.body)}${record}` }
+    published = { ...draft, body: `${stripLandMarkers(draft.body)}${record}` }
     plan = { kind: "pr-comment", prNumber: github.request.prNumber, body: published.body }
     expectation = { kind: "pr-comment" }
   }

@@ -175,7 +175,7 @@ A head would need a person when any of these hold:
 - it has more review rounds than `max_review_rounds`;
 - it has more changed lines than `max_lines`, not counting docs, tests, or generated files;
 - it touches an always-human path: `.github/`, `.nibble/`, migrations, the manifests and lockfiles of common package managers, or anything in `always_human`;
-- it removes a test file or assertions, or adds a skip or focus marker;
+- it removes a test file or assertions, or adds a skip or focus marker, in common test layouts;
 - a review thread is unresolved, or a critical finding was closed without its code changing. Other findings may be closed by a reply, because the reviewer can be wrong.
 
 Settings live in the `[land]` table of `.nibble/sdlc.toml`, read from the default branch so a pull request can't relax its own rules. Every setting is optional, and other tables belong to other tools:

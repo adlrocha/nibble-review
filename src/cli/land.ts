@@ -47,8 +47,18 @@ function latestWhereToLook(bodies: string[]): WhereToLook | null {
   return null
 }
 
-/** Judges the current head and reports it. Never merges and never blocks. */
-export async function runLand(github: GitHubClient, prNumber: number, botLogin: string): Promise<string> {
+/**
+ * Judges the current head and reports it. Never merges and never blocks.
+ *
+ * Without `publish` it writes nothing, matching the review CLI. Both writes
+ * are safe to repeat: the comment is replaced and the status is per commit.
+ */
+export async function runLand(
+  github: GitHubClient,
+  prNumber: number,
+  botLogin: string,
+  publish: boolean
+): Promise<string> {
   const defaultBranch = await github.getDefaultBranch()
   // The default branch, never the PR head, so a pull request cannot relax its own rules.
   const config = parseSdlcConfig(await github.getRepositoryFile(LAND_CONFIG_PATH, defaultBranch))
@@ -74,7 +84,7 @@ export async function runLand(github: GitHubClient, prNumber: number, botLogin: 
 
   const authorship = reviewAuthorship(botLogin)
   // The risk comment is land's own output, so it never counts as review evidence.
-  const bodies = ownBodies(authorship, comments, reviews).filter(body => !body.includes(RISK_COMMENT_MARKER))
+  const bodies = ownBodies(authorship, comments, reviews).filter(body => !body.startsWith(RISK_COMMENT_MARKER))
   const decision = evaluateLand({
     headSha,
     authorIsBot: pullRequest.user?.type === "Bot",
@@ -93,8 +103,11 @@ export async function runLand(github: GitHubClient, prNumber: number, botLogin: 
 
   const whereToLook = latestWhereToLook(bodies)
   const body = renderRiskComment({ headSha, decision, config, whereToLook })
+  if (!publish) {
+    return `dry run: ${statusDescription(decision)}\n${body}`
+  }
   const existing = comments.find(
-    comment => authorship.isOwn(comment) && String(comment.body ?? "").includes(RISK_COMMENT_MARKER)
+    comment => authorship.isOwn(comment) && String(comment.body ?? "").startsWith(RISK_COMMENT_MARKER)
   )
   if (existing) {
     await github.updateIssueComment(existing.id, body)
@@ -111,7 +124,7 @@ export async function runLand(github: GitHubClient, prNumber: number, botLogin: 
 }
 
 /** Action entry point: land is advisory here, so any failure is a warning, not a red job. */
-export async function main(env = process.env): Promise<void> {
+export async function main(argv = process.argv.slice(2), env = process.env): Promise<void> {
   try {
     const token = env.GH_TOKEN || env.GITHUB_TOKEN
     const repository = env.GITHUB_REPOSITORY
@@ -120,7 +133,12 @@ export async function main(env = process.env): Promise<void> {
       throw new Error("GH_TOKEN, GITHUB_REPOSITORY and PR_NUMBER are required")
     }
     const github = createGitHubClient({ token, repository })
-    const result = await runLand(github, prNumber, env.REVIEW_BOT_LOGIN || DEFAULT_REVIEW_BOT_LOGIN)
+    const result = await runLand(
+      github,
+      prNumber,
+      env.REVIEW_BOT_LOGIN || DEFAULT_REVIEW_BOT_LOGIN,
+      argv.includes("--publish")
+    )
     process.stdout.write(`${result}\n`)
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
