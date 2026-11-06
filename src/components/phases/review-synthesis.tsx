@@ -35,7 +35,7 @@ const WhereToLookSchema = z
   .max(5)
   .nullable()
   .default(null)
-  .describe("Two to five places a human reader should check, each a file and a question. Null when nothing stands out.")
+  .describe("Null unless the policy asks for this list.")
 
 const SynthesisSchema = z
   .object({

@@ -138,6 +138,7 @@ Models investigate and write. They do not decide which commit was reviewed, whet
 | `allow-skip` | `true` | Honor `[skip]` titles and `@nibble-review skip` body lines from trusted human authors. Set `false` when the review check is required for merging. |
 | `install-dependencies` | `false` | Install the repository's npm/pnpm/yarn dependencies first. Runs their install scripts. |
 | `emojis` | `true` | Prefix inline comments with severity emojis. |
+| `land` | `false` | Report whether each head could merge without a person. See [Land](#land). |
 | `timeout-minutes` | `20` | Upper bound for each review attempt. |
 
 Use another provider by changing two inputs:
@@ -157,7 +158,7 @@ A review that has published nothing a minute before `timeout-minutes` gives up a
 
 ## Land
 
-Land answers one question for each pull-request head: could this exact commit merge without a person? It's off unless a workflow sets `land: "true"` and grants `statuses: write`, and it runs after the review as a separate step with no model. **Land never merges or blocks anything.** It only reports, so a failure is a warning, and removing the input turns it all off.
+Land answers one question for each pull-request head: could this exact commit merge without a person? It's off unless a workflow sets `land: "true"`, and it runs after the review as a separate step with no model. The commit status also needs `statuses: write`; without it you still get the comment, plus a warning. **Land never merges or blocks anything.** It only reports, so a failure is a warning, and removing the input turns it all off.
 
 ```yaml
 - uses: adlrocha/nibble-review@v1
@@ -176,9 +177,9 @@ A head would need a person when any of these hold:
 - a bot or App opened the pull request;
 - it has more review rounds than `max_review_rounds`;
 - it has more changed lines than `max_lines`, not counting docs, tests, or generated files;
-- it touches an always-human path: `.github/`, `.nibble/`, migrations, the manifests and lockfiles of common package managers, or anything in `always_human`;
+- it touches an always-human path: `.github/`, `.nibble/`, database migrations, the manifests and lockfiles of common package managers, or anything in `always_human`;
 - it removes a test file or assertions, or adds a skip or focus marker, in common test layouts;
-- a review thread is unresolved, or a critical finding was closed without its code changing. Other findings may be closed by a reply, because the reviewer can be wrong.
+- a thread this reviewer opened is unresolved, or a critical finding was closed without its code changing. Other findings may be closed by a reply, because the reviewer can be wrong.
 
 Settings live in the `[land]` table of `.nibble/sdlc.toml`, read from the default branch so a pull request can't relax its own rules. Every setting is optional, and other tables belong to other tools:
 

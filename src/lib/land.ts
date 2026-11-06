@@ -27,6 +27,8 @@ export const BUILT_IN_ALWAYS_HUMAN: readonly string[] = [
   ".github/**",
   ".nibble/**",
   "**/migrations/**",
+  "**/db/migrate/**",
+  "**/db/migration/**",
   "**/package.json",
   "**/package-lock.json",
   "**/pnpm-lock.yaml",

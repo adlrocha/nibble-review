@@ -115,6 +115,8 @@ test("always-human paths match at any depth, by old name, and from repo config",
     ".nibble/sdlc.toml",
     "migrations/001.sql",
     "apps/db/migrations/001.sql",
+    "db/migrate/20240101_add_index.rb",
+    "src/main/resources/db/migration/V2__add.sql",
     "package.json",
     "apps/web/package.json",
     "Cargo.lock",
@@ -323,6 +325,19 @@ test("land updates its existing comment and ignores other workflows' look-alikes
   await runLand(github, 1, bot, true)
   assert.equal(writes[1][0], "update")
   assert.equal(writes[1][1], 7)
+})
+
+test("land refreshes every copy of its comment", async () => {
+  const { github, writes, own } = fakeGitHub()
+  github.listPullRequestComments = async () => [
+    { ...own(RISK_COMMENT_MARKER), id: 1 },
+    { ...own(RISK_COMMENT_MARKER), id: 2 }
+  ]
+  await runLand(github, 1, bot, true)
+  assert.deepEqual(
+    writes.filter(write => write[0] === "update").map(write => write[1]),
+    [1, 2]
+  )
 })
 
 test("a verdict record from another author is not trusted", async () => {

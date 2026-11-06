@@ -108,12 +108,14 @@ export async function runLand(
   if (!publish) {
     return `dry run: ${statusDescription(decision)}\n${body}`
   }
-  const existing = comments.find(
+  const existing = comments.filter(
     comment => authorship.isOwn(comment) && String(comment.body ?? "").startsWith(RISK_COMMENT_MARKER)
   )
-  if (existing) {
-    await github.updateIssueComment(existing.id, body)
-  } else {
+  // Two racing runs can each create a comment, so every copy is refreshed.
+  for (const comment of existing) {
+    await github.updateIssueComment(comment.id, body)
+  }
+  if (existing.length === 0) {
     await github.createPullRequestComment(prNumber, body)
   }
   // Shadow mode always reports success, so it can never block a pull request.
