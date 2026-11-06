@@ -1,4 +1,5 @@
 import assert from "node:assert/strict"
+import { parseVerdictMarker, parseWhereToLook } from "../../dist/lib/land.js"
 import { execFileSync } from "node:child_process"
 import fs from "node:fs"
 import os from "node:os"
@@ -678,6 +679,29 @@ test("native Parallel starts all six specialists concurrently", { timeout: 2_000
   const result = await running
   assert.equal(result.status, "reviewed")
   assert.match(result.body, /✅ LGTM$/u)
+})
+
+test("land adds where to look and a verdict record only when the repository opted in", async t => {
+  const synthesis = {
+    direct_answer: null,
+    summary: "The focused change is ready.",
+    since_last_review: null,
+    recommendation: null,
+    where_to_look: ["`src/app.ts:4`: does the retry stop on cancel?"]
+  }
+  const plain = await runReview(reviewOptions(t, fakeGitHub().client), () => reviewProvider({ synthesis }))
+  assert.doesNotMatch(plain.body, /Where to look|nibble-review:verdict/u)
+
+  const base = reviewOptions(t, fakeGitHub().client)
+  const result = await runReview({ ...base, request: { ...base.request, land: true } }, () =>
+    reviewProvider({ synthesis })
+  )
+  assert.equal(parseWhereToLook(result.body), "- `src/app.ts:4`: does the retry stop on cancel?")
+  assert.deepEqual(parseVerdictMarker(result.body), {
+    sha: base.request.workspaceHeadSha,
+    verdict: "request-changes",
+    kind: "full"
+  })
 })
 
 test("request-changes synthesis may coordinate next steps without restating findings", async t => {

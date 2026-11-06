@@ -155,6 +155,43 @@ If you change `command`, change the mention in your workflow's `if:` filter to m
 
 A review that has published nothing a minute before `timeout-minutes` gives up and hands over to the fallback model, so a slow primary model doesn't fail the check. Publication failures, and timeouts after publishing has started, never trigger the fallback, because their GitHub mutation outcome may be ambiguous. The job's own `timeout-minutes` should cover two attempts (the example uses 45). Each run writes a job summary with the model, Agent turns, token usage, estimated cost (from pi's model catalog, not a reconciled bill), comment counts, and publication status.
 
+## Land
+
+Land answers one question for each pull-request head: could this exact commit merge without a person? It's off unless a workflow sets `land: "true"` and grants `statuses: write`, and it runs after the review as a separate step with no model. **Land never merges or blocks anything.** It only reports, so a failure is a warning, and removing the input turns it all off.
+
+```yaml
+- uses: adlrocha/nibble-review@v1
+  with:
+    api-key: ${{ secrets.OPENCODE_API_KEY }}
+    land: "true"
+```
+
+Each run updates one `## Risk` comment and posts a `nibble-review/land` commit status, which is always `success`. The review also gains a `## Where to look` list, and a hidden record of the verdict for its commit.
+
+A head would need a person when any of these hold:
+
+- it has no LGTM on that exact commit, or the pull request has never had a full review;
+- a bot or App opened the pull request;
+- it has more review rounds than `max_review_rounds`;
+- it has more changed lines than `max_lines`, not counting docs, tests, or generated files;
+- it touches an always-human path: `.github/`, `.nibble/`, migrations, dependency manifests and lockfiles, or anything in `always_human`;
+- it removes a test file or assertions, or adds a skip or focus marker;
+- a review thread is unresolved, or a critical finding was closed without its code changing. Other findings may be closed by a reply, because the reviewer can be wrong.
+
+Settings live in `.nibble/sdlc.toml`, read from the default branch so a pull request can't relax its own rules. Every setting is optional:
+
+```toml
+[land]
+mode = "shadow"          # or "off"
+main_is_staging = false  # true when main deploys to dev and a release deploys to production
+max_lines = 400
+max_review_rounds = 5
+always_human = ["src/auth/**"]
+
+[merge]
+method = "squash"        # read by `nibble sdlc merge`
+```
+
 ## Fixer (experimental)
 
 `adlrocha/nibble-review/fix@v1` fixes one pull request's failing checks and unresolved review threads, then pushes one commit. See [examples/nibble-fix.yml](examples/nibble-fix.yml).

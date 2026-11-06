@@ -6,6 +6,7 @@ import {
   isComparableReviewDelta,
   MAX_REVIEW_DELTA_EVIDENCE_CHARS
 } from "../../lib/review-gate.js"
+import { WHERE_TO_LOOK_HEADING } from "../../lib/land.js"
 import type { ReviewFinding } from "../../lib/review-queue.js"
 import { REVIEW_POLICY_INCLUDE_LIMIT_BYTES } from "../../prompt-limits.js"
 import { ReviewContextPrompt } from "../context/prompt.js"
@@ -29,12 +30,20 @@ const SinceLastReviewSchema = SummarySchema.nullable()
     "A concise comparison with the previous review, including a material direction change. Return a value only for a complete ancestor_diff or rebase_compare; otherwise return null."
   )
 
+const WhereToLookSchema = z
+  .array(z.string().trim().min(1).max(300))
+  .max(5)
+  .nullable()
+  .default(null)
+  .describe("Two to five places a human reader should check, each a file and a question. Null when nothing stands out.")
+
 const SynthesisSchema = z
   .object({
     direct_answer: z.string().trim().min(1).max(2_000).nullable(),
     summary: SummarySchema,
     since_last_review: SinceLastReviewSchema,
-    recommendation: RecommendationSchema.nullable()
+    recommendation: RecommendationSchema.nullable(),
+    where_to_look: WhereToLookSchema
   })
   .strict()
 
@@ -87,7 +96,8 @@ const SynthesisAgent: AML.Component<SynthesisAgentProps> = ({ children, evidence
   )
 }
 
-function verdict(findings: ReviewFinding[]): "⛔ Block" | "⚠️ Request changes" | "✅ LGTM" {
+/** Derives the one verdict from retained findings; no model chooses it. */
+export function reviewVerdict(findings: ReviewFinding[]): "⛔ Block" | "⚠️ Request changes" | "✅ LGTM" {
   if (
     findings.some(
       finding => finding.kind === "blocker" || (finding.kind === "inline" && finding.severity === "critical")
@@ -111,7 +121,7 @@ export const ReviewSynthesis: AML.Component<ReviewSynthesisProps> = async ({ chi
   const auditHandoff = await evaluate(children)
   const lanes = review.queue.completed()
   const validated = review.queue.finalize()
-  const finalVerdict = verdict(validated.findings)
+  const finalVerdict = reviewVerdict(validated.findings)
   // Manual reviews bypass gate comparison, while follow-up gates may escalate.
   // Rebuild from the immutable snapshot so synthesis owns the evidence it publishes.
   const comparison = compareReviewHistory(review.snapshot, review.github.request.workspace)
@@ -171,6 +181,7 @@ export const ReviewSynthesis: AML.Component<ReviewSynthesisProps> = async ({ chi
   const sinceLastReview = canUseSinceLastReview ? synthesis.since_last_review : null
   const summary = sinceLastReview || synthesis.summary
   const summaryHeading = sinceLastReview ? "Since last review" : "Review Summary"
+  const whereToLook = review.github.request.land ? synthesis.where_to_look : null
   return (
     <>
       {directAnswer ? <Block>{directAnswer}</Block> : null}
@@ -192,6 +203,12 @@ export const ReviewSynthesis: AML.Component<ReviewSynthesisProps> = async ({ chi
         <>
           ## 📝 Review notes
           <Block>{notes.map(finding => `- ${finding.body}`).join("\n")}</Block>
+        </>
+      ) : null}
+      {whereToLook && whereToLook.length > 0 ? (
+        <>
+          {WHERE_TO_LOOK_HEADING}
+          <Block>{whereToLook.map(item => `- ${item}`).join("\n")}</Block>
         </>
       ) : null}
       ## Verdict

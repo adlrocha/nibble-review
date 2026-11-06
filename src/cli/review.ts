@@ -165,7 +165,8 @@ export async function main(argv = process.argv.slice(2), env = process.env): Pro
       eventPath: env.GITHUB_EVENT_PATH || null,
       actor: trigger.actor,
       triggerCommentId,
-      ignoreHistory: env.REVIEW_IGNORE_HISTORY === "true"
+      ignoreHistory: env.REVIEW_IGNORE_HISTORY === "true",
+      land: env.REVIEW_LAND === "true"
     },
     github,
     actionMode: options.publish ? "live" : "dry-run",

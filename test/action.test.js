@@ -154,3 +154,12 @@ test("neither action asks setup-node to cache files outside the caller's workspa
     assert.doesNotMatch(yaml, /cache-dependency-path/u)
   }
 })
+
+test("land is opt-in and runs only after an accepted review", () => {
+  assert.match(action, /\n  land:\n[\s\S]*?default: "false"/u)
+  assert.match(
+    action,
+    /Report land decision\n\s+if: steps\.preflight\.outputs\.should_review == 'true' && inputs\.land == 'true'/u
+  )
+  assert.match(action, /REVIEW_LAND: \$\{\{ inputs\.land \}\}/u)
+})

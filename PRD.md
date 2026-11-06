@@ -15,7 +15,7 @@ Nibble Review provides actionable, evidence-backed pull-request review with the 
 
 ## Non-goals
 
-- Automatic merge or approval.
+- Automatic merge or approval by the reviewer. Land reports whether a head could merge without a person, and it never merges or blocks.
 - Review of fork code with repository secrets.
 - A second full-PR investigation during audit or synthesis.
 - Comment quotas, forced findings, or severity inflation to satisfy a score.
