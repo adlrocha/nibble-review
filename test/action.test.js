@@ -162,4 +162,8 @@ test("land is opt-in and runs only after an accepted review", () => {
     /Report land decision\n\s+if: steps\.preflight\.outputs\.should_review == 'true' && inputs\.land == 'true'/u
   )
   assert.match(action, /REVIEW_LAND: \$\{\{ inputs\.land \}\}/u)
+  const byName = steps(action)
+  assert.match(byName["Report land decision"], /land\.js" --publish/u)
+  const login = block => /REVIEW_BOT_LOGIN: (.+)/u.exec(block)[1]
+  assert.equal(login(byName["Report land decision"]), login(byName["Review pull request"]))
 })

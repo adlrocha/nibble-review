@@ -168,9 +168,11 @@ Land answers one question for each pull-request head: could this exact commit me
 
 Each run updates one `## Risk` comment and posts a `nibble-review/land` commit status, which is always `success`. The review also gains a `## Where to look` list, and a hidden record of the verdict for its commit.
 
+Land counts only reviews published since it was enabled, because older ones have no verdict record. A pull request already open at that point reports "no full review" until its next full review.
+
 A head would need a person when any of these hold:
 
-- it has no LGTM on that exact commit, or the pull request has never had a full review;
+- it has no LGTM on that exact commit, the pull request has never had a full review, or the last full review blocked it and nothing but a fast-track came after;
 - a bot or App opened the pull request;
 - it has more review rounds than `max_review_rounds`;
 - it has more changed lines than `max_lines`, not counting docs, tests, or generated files;

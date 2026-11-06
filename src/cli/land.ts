@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { realpathSync } from "node:fs"
+import { parseArgs } from "node:util"
 import { fileURLToPath } from "node:url"
 
 import {
@@ -22,6 +23,7 @@ import {
   type PullRequestReview
 } from "../services/github/client.js"
 import { DEFAULT_REVIEW_BOT_LOGIN } from "../services/review-evidence.js"
+import { ReviewPreflight } from "../services/review-preflight.js"
 
 /** Keeps this reviewer's top-level bodies, oldest first, from a pull request's comments and reviews. */
 function ownBodies(authorship: ReviewAuthorship, comments: IssueComment[], reviews: PullRequestReview[]): string[] {
@@ -132,13 +134,23 @@ export async function main(argv = process.argv.slice(2), env = process.env): Pro
     if (!token || !repository || !Number.isInteger(prNumber) || prNumber <= 0) {
       throw new Error("GH_TOKEN, GITHUB_REPOSITORY and PR_NUMBER are required")
     }
+    const { values } = parseArgs({ args: argv, options: { publish: { type: "boolean" } }, strict: true })
+    const publish = values.publish === true
     const github = createGitHubClient({ token, repository })
-    const result = await runLand(
-      github,
-      prNumber,
-      env.REVIEW_BOT_LOGIN || DEFAULT_REVIEW_BOT_LOGIN,
-      argv.includes("--publish")
-    )
+    if (publish) {
+      // The action checks first, but direct runs don't, so the write boundary repeats the policy.
+      const guard = await new ReviewPreflight({
+        github,
+        repository,
+        prNumber,
+        command: env.REVIEW_COMMAND?.trim() || undefined
+      }).evaluate(env.TRIGGER_COMMENT_ID ? Number(env.TRIGGER_COMMENT_ID) : null)
+      if (!guard.shouldReview) {
+        process.stdout.write(`land skipped: ${guard.reason}\n`)
+        return
+      }
+    }
+    const result = await runLand(github, prNumber, env.REVIEW_BOT_LOGIN || DEFAULT_REVIEW_BOT_LOGIN, publish)
     process.stdout.write(`${result}\n`)
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)

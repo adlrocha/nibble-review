@@ -35,7 +35,7 @@ export type ReviewRequest = {
   actor: string | null
   triggerCommentId?: number | null
   ignoreHistory: boolean
-  /** True when the repository opted into land, which adds "where to look" to reviews. */
+  /** True when the repository opted into land: reviews add "where to look" and the verdict record land reads. */
   land?: boolean
 }
 

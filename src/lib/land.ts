@@ -5,6 +5,7 @@ import { z } from "zod"
 
 import type { PullRequestFile } from "../services/github/client.js"
 import { REVIEW_MARKER } from "./review-authorship.js"
+import { isIgnoredLockfile } from "./review-diff.js"
 import { inlineSeverityPrefix, type ReviewVerdictLabel } from "./review-queue.js"
 
 /** Commit status context that carries the land decision for one pull-request head. */
@@ -173,7 +174,7 @@ export function parseWhereToLook(body: string): string | null {
   return (end < 0 ? rest : rest.slice(0, end)).trim() || null
 }
 
-const NOT_COUNTED = /(^|\/)(docs?|fixtures|generated|dist)\/|\.(md|mdx|txt|snap)$|(^|\/)[^/]*\.lock$|-lock\.[^/]+$/iu
+const NOT_COUNTED = /(^|\/)(docs?|fixtures|generated|dist)\/|\.(md|mdx|txt|snap)$/iu
 
 const TEST_PATH =
   /(^|\/)(tests?|__tests__|spec)\/|\.(test|spec)\.[^/]+$|_test\.[^/]+$|(^|\/)(test_[^/]+|tests\.[^/]+)$/iu
@@ -199,7 +200,10 @@ const ASSERTION = /\b(assert\w*|expect)\b/u
 /** Counts the changed lines that carry risk, leaving out docs, tests, and generated output. */
 function countedLines(files: PullRequestFile[]): number {
   return files
-    .filter(file => !NOT_COUNTED.test(file.filename) && !isTestFile(file.filename))
+    .filter(
+      file =>
+        ![NOT_COUNTED.test(file.filename), isTestFile(file.filename), isIgnoredLockfile(file.filename)].some(Boolean)
+    )
     .reduce((sum, file) => sum + file.changes, 0)
 }
 
@@ -260,8 +264,13 @@ export function evaluateLand(input: LandInput): LandDecision {
   } else if (onHead.verdict !== "lgtm") {
     reasons.push(`verdict on this commit is ${onHead.verdict}`)
   }
-  if (!records.some(record => record.kind === "full")) {
+  const lastFull = records.filter(record => record.kind === "full").at(-1)
+  if (!lastFull) {
     reasons.push("no full review on this pull request")
+  } else if (lastFull.verdict === "block" && lastFull.sha !== headSha) {
+    // A PR-level blocker leaves no thread to resolve, and a fast-track of a
+    // later commit can't clear it. Request-changes findings do leave threads.
+    reasons.push("the last full review blocked and no full review has cleared it")
   }
   if (records.length > config.land.max_review_rounds) {
     reasons.push(`${records.length} review rounds, over the limit of ${config.land.max_review_rounds}`)
@@ -297,7 +306,9 @@ export function evaluateLand(input: LandInput): LandDecision {
 
 /** Short text for the commit status, within GitHub's description limit. */
 export function statusDescription(decision: LandDecision): string {
-  const text = decision.merge ? "shadow: would merge" : `shadow: would ask you (${decision.reasons[0]})`
+  // Commit statuses are plain text, so the Markdown code spans go.
+  const reason = decision.reasons[0]?.replaceAll("`", "")
+  const text = decision.merge ? "shadow: would merge" : `shadow: would ask you (${reason})`
   return text.length <= MAX_STATUS_DESCRIPTION ? text : `${text.slice(0, MAX_STATUS_DESCRIPTION - 1)}…`
 }
 

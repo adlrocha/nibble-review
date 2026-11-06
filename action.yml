@@ -188,5 +188,7 @@ runs:
       env:
         GH_TOKEN: ${{ steps.app-token.outputs.token || inputs.github-token }}
         REVIEW_BOT_LOGIN: ${{ steps.app-token.outputs.app-slug && format('{0}[bot]', steps.app-token.outputs.app-slug) || 'github-actions[bot]' }}
+        REVIEW_COMMAND: ${{ inputs.command }}
         PR_NUMBER: ${{ inputs.pr-number }}
+        TRIGGER_COMMENT_ID: ${{ inputs.trigger-comment-id }}
       run: node "$GITHUB_ACTION_PATH/dist/cli/land.js" --publish

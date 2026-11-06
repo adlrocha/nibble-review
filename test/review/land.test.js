@@ -68,6 +68,14 @@ test("a fast-track LGTM cannot override a full review of the same commit", () =>
   assert.deepEqual(reasons({ records }), ["verdict on this commit is block"])
 })
 
+test("a block stays binding until a full review of a later commit clears it", () => {
+  const blocked = { sha: older, verdict: "block", kind: "full" }
+  assert.deepEqual(reasons({ records: [blocked, { sha: head, verdict: "lgtm", kind: "delta" }] }), [
+    "the last full review blocked and no full review has cleared it"
+  ])
+  assert.deepEqual(reasons({ records: [blocked, { sha: head, verdict: "lgtm", kind: "full" }] }), [])
+})
+
 test("a delta LGTM needs an earlier full review on the pull request", () => {
   assert.deepEqual(reasons({ records: [{ sha: head, verdict: "lgtm", kind: "delta" }] }), [
     "no full review on this pull request"
@@ -83,6 +91,10 @@ test("bot authors and too many rounds go to a person", () => {
   assert.deepEqual(reasons({ authorIsBot: true }), ["opened by a bot or App"])
   const records = Array.from({ length: 6 }, () => ({ sha: head, verdict: "lgtm", kind: "full" }))
   assert.deepEqual(reasons({ records }), ["6 review rounds, over the limit of 5"])
+})
+
+test("lockfiles the reviewer ignores are not counted either", () => {
+  assert.equal(evaluateLand({ ...clean, files: [file("npm-shrinkwrap.json", 500)] }).countedLines, 0)
 })
 
 test("size counts code but not docs, tests, or generated output", () => {
@@ -224,6 +236,8 @@ test("where to look is cut at the next heading", () => {
 })
 
 test("status text states shadow mode and fits GitHub's limit", () => {
+  const plain = statusDescription(evaluateLand({ ...clean, files: [file(".github/ci.yml")] }))
+  assert.equal(plain, "shadow: would ask you (always-human paths: .github/ci.yml)")
   assert.equal(statusDescription(evaluateLand(clean)), "shadow: would merge")
   const text = statusDescription({ merge: false, reasons: ["x".repeat(300)], countedLines: 0, rounds: 0 })
   assert.equal(text.length, 140)
@@ -378,6 +392,14 @@ test("land refuses to decide without a head or threads", async () => {
     runLand(fakeGitHub({ listReviewThreads: async () => ({ available: false, threads: [] }) }).github, 1, bot, true),
     /threads are unavailable/u
   )
+})
+
+test("a mistyped flag is a warning, not a silent dry run", async t => {
+  const output = []
+  t.mock.method(process.stdout, "write", chunk => output.push(chunk))
+  await main(["--publsh"], { GH_TOKEN: "t", GITHUB_REPOSITORY: "o/r", PR_NUMBER: "1" })
+  t.mock.restoreAll()
+  assert.match(output.join(""), /::warning title=Nibble Review land::.*--publsh/u)
 })
 
 test("land failures warn instead of failing the job", async t => {

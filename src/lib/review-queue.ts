@@ -644,7 +644,7 @@ export class ReviewQueue {
 }
 
 /** The severity label an inline finding is published with, shared with land. */
-export function inlineSeverityPrefix(severity: string): string {
+export function inlineSeverityPrefix(severity: ReviewSeverity): string {
   return `**${severity}:**`
 }
 
