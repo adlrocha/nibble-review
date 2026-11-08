@@ -1,0 +1,1 @@
+Set `where_to_look` to two to five places a human reader should check before merging, each one file with a line when known and one question to answer there, such as `` `src/ledger.ts:40`: does rounding match the settlement contract? ``. Name what tests and these findings would not settle. Do not repeat findings or summarize the change. Set it to null when nothing stands out.

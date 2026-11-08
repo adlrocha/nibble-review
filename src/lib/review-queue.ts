@@ -557,7 +557,7 @@ export class ReviewQueue {
   /** Renders application-owned severity once in the eventual inline body. */
   private static authorComment(finding: Extract<ReviewFinding, { kind: "inline" }>, reviewEmojis: boolean): string {
     const emoji = reviewEmojis ? `${REVIEW_SEVERITY_EMOJI[finding.severity]} ` : ""
-    return `${emoji}**${finding.severity}:** ${finding.body}`
+    return `${emoji}${inlineSeverityPrefix(finding.severity)} ${finding.body}`
   }
 
   /** Preserves Markdown fences while avoiding accidental setext headings. */
@@ -641,4 +641,28 @@ export class ReviewQueue {
       throw new Error(`unknown or inactive review finding id: ${unknown.join(", ")}`)
     }
   }
+}
+
+/** The severity label an inline finding is published with, shared with land. */
+export function inlineSeverityPrefix(severity: ReviewSeverity): string {
+  return `**${severity}:**`
+}
+
+export type ReviewVerdictLabel = "⛔ Block" | "⚠️ Request changes" | "✅ LGTM"
+
+/** Derives the one verdict from retained findings; no model chooses it. */
+export function reviewVerdict(findings: ReviewFinding[]): ReviewVerdictLabel {
+  if (
+    findings.some(
+      finding => finding.kind === "blocker" || (finding.kind === "inline" && finding.severity === "critical")
+    )
+  ) {
+    return "⛔ Block"
+  }
+  if (findings.some(finding => finding.kind === "inline" && finding.severity !== "nit")) {
+    return "⚠️ Request changes"
+  }
+  // Notes are advisory: they render in their own section but never determine
+  // merge readiness. Only a retained blocker hijacks the verdict.
+  return "✅ LGTM"
 }

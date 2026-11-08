@@ -212,6 +212,23 @@ export type Reaction = {
   } | null
 }
 
+/** One changed file, as GitHub lists it for a pull request. */
+export type PullRequestFile = {
+  filename: string
+  previous_filename?: string | undefined
+  status: string
+  additions: number
+  deletions: number
+  changes: number
+  patch?: string | undefined
+}
+
+export type CommitStatus = {
+  state: "success" | "pending" | "failure"
+  context: string
+  description: string
+}
+
 export type ReviewThreadsResult = {
   available: boolean
   threads: ReviewThread[]
@@ -242,6 +259,13 @@ export type GitHubClient = {
   createPullRequestComment(prNumber: number, body: string): Promise<void>
   submitReview(prNumber: number, headSha: string, payload: ReviewPayload): Promise<void>
   submitReply(prNumber: number, commentId: number, body: string): Promise<void>
+  /** Returns the repository's default branch name. */
+  getDefaultBranch(): Promise<string>
+  /** Reads a UTF-8 file at `ref`, or null when it does not exist. */
+  getRepositoryFile(path: string, ref: string): Promise<string | null>
+  listPullRequestFiles(prNumber: number): Promise<PullRequestFile[]>
+  updateIssueComment(commentId: number, body: string): Promise<void>
+  createCommitStatus(sha: string, status: CommitStatus): Promise<void>
 }
 
 /**
@@ -804,6 +828,54 @@ query($owner: String!, $name: String!, $number: Int!, $cursor: String) {
         comment_id: commentId,
         body: publishable(body)
       })
+    },
+
+    async getDefaultBranch() {
+      const { owner, repo } = splitRepository(options.repository)
+      const response = await octokit.request("GET /repos/{owner}/{repo}", { owner, repo })
+      return response.data.default_branch
+    },
+
+    async getRepositoryFile(path, ref) {
+      const { owner, repo } = splitRepository(options.repository)
+      try {
+        const response = await octokit.request("GET /repos/{owner}/{repo}/contents/{path}", { owner, repo, path, ref })
+        const file = response.data
+        if (Array.isArray(file) || file.type !== "file" || typeof file.content !== "string") {
+          throw new Error(`${path} is not a file`)
+        }
+        return Buffer.from(file.content, "base64").toString("utf8")
+      } catch (error) {
+        if ((error as { status?: unknown }).status === 404) {
+          return null
+        }
+        throw error
+      }
+    },
+
+    async listPullRequestFiles(prNumber) {
+      const { owner, repo } = splitRepository(options.repository)
+      return (await octokit.paginate("GET /repos/{owner}/{repo}/pulls/{pull_number}/files", {
+        owner,
+        repo,
+        pull_number: prNumber,
+        per_page: 100
+      })) as PullRequestFile[]
+    },
+
+    async updateIssueComment(commentId, body) {
+      const { owner, repo } = splitRepository(options.repository)
+      await octokit.request("PATCH /repos/{owner}/{repo}/issues/comments/{comment_id}", {
+        owner,
+        repo,
+        comment_id: commentId,
+        body: publishable(body)
+      })
+    },
+
+    async createCommitStatus(sha, status) {
+      const { owner, repo } = splitRepository(options.repository)
+      await octokit.request("POST /repos/{owner}/{repo}/statuses/{sha}", { owner, repo, sha, ...status })
     }
   }
 }
