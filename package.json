@@ -35,7 +35,7 @@
     "pi-acp": "0.0.34",
     "pi-mcp-adapter": "5.2.0",
     "smol-toml": "1.6.0",
-    "zod": "4.6.5"
+    "zod": "4.6.6"
   },
   "devDependencies": {
     "@commitlint/cli": "^21.2.3",
