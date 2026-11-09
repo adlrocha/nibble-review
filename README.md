@@ -177,7 +177,7 @@ A head would need a person when any of these hold:
 - a bot or App opened the pull request;
 - it has more review rounds than `max_review_rounds`;
 - it has more changed lines than `max_lines`, not counting docs, tests, or generated files;
-- it touches an always-human path: `.github/`, `.nibble/`, database migrations, the manifests and lockfiles of common package managers, or anything in `always_human`;
+- it touches an always-human path: `.github/`, `.nibble/`, database migrations, the manifests and lockfiles of common package managers, build and CI files (`Dockerfile`, `build.rs`, `.cargo/config.toml`, `.npmrc`, `action.yml`), or anything in `always_human`. Patterns match inside dot directories and ignore letter case;
 - it removes a test file or assertions, or adds a skip or focus marker, in common test layouts;
 - a thread this reviewer opened is unresolved, or a critical finding was closed without its code changing. Other findings may be closed by a reply, because the reviewer can be wrong.
 

@@ -13,6 +13,7 @@ import {
   renderRiskComment,
   RISK_COMMENT_MARKER,
   statusDescription,
+  type VerdictRecord,
   type WhereToLook
 } from "../lib/land.js"
 import { reviewAuthorship, type ReviewAuthorship } from "../lib/review-authorship.js"
@@ -25,17 +26,39 @@ import {
 import { DEFAULT_REVIEW_BOT_LOGIN } from "../services/review-evidence.js"
 import { ReviewPreflight } from "../services/review-preflight.js"
 
+/** One of this reviewer's top-level bodies, and whether it was posted as a review or a comment. */
+type OwnBody = { body: string; source: "review" | "comment" }
+
 /** Keeps this reviewer's top-level bodies, oldest first, from a pull request's comments and reviews. */
-function ownBodies(authorship: ReviewAuthorship, comments: IssueComment[], reviews: PullRequestReview[]): string[] {
+function ownBodies(authorship: ReviewAuthorship, comments: IssueComment[], reviews: PullRequestReview[]): OwnBody[] {
   const dated = [
-    ...comments.filter(item => authorship.isOwn(item)).map(item => ({ at: item.created_at, body: item.body })),
+    ...comments
+      .filter(item => authorship.isOwn(item))
+      .map(item => ({ at: item.created_at, body: String(item.body ?? ""), source: "comment" as const })),
     ...reviews
       .filter(item => authorship.isOwn(item))
-      .map(item => ({ at: item.submitted_at ?? item.submittedAt, body: item.body }))
+      .map(item => ({
+        at: item.submitted_at ?? item.submittedAt,
+        body: String(item.body ?? ""),
+        source: "review" as const
+      }))
   ]
   return dated
     .sort((left, right) => String(left.at ?? "").localeCompare(String(right.at ?? "")))
-    .map(item => String(item.body ?? ""))
+    .map(({ body, source }) => ({ body, source }))
+}
+
+/**
+ * Reads a verdict record only where publication can have written it.
+ *
+ * Full reviews are submitted as pull-request reviews and no-review LGTMs as
+ * comments. Answers are comments that carry no record, so a full record in a
+ * comment, or a delta record in a review, did not come from publication.
+ */
+function trustedRecord({ body, source }: OwnBody): VerdictRecord | null {
+  const record = parseVerdictMarker(body)
+  const expected = record?.kind === "full" ? "review" : "comment"
+  return record && source === expected ? record : null
 }
 
 /** Finds the newest "where to look" list, remembering which commit it was written for. */
@@ -86,11 +109,11 @@ export async function runLand(
 
   const authorship = reviewAuthorship(botLogin)
   // The risk comment is land's own output, so it never counts as review evidence.
-  const bodies = ownBodies(authorship, comments, reviews).filter(body => !body.startsWith(RISK_COMMENT_MARKER))
+  const own = ownBodies(authorship, comments, reviews).filter(item => !item.body.startsWith(RISK_COMMENT_MARKER))
   const decision = evaluateLand({
     headSha,
     authorIsBot: pullRequest.user?.type === "Bot",
-    records: bodies.map(parseVerdictMarker).filter(record => record !== null),
+    records: own.map(trustedRecord).filter(record => record !== null),
     files,
     threads: threads.threads
       .filter(thread => authorship.isOwn(thread.comments[0]))
@@ -103,7 +126,7 @@ export async function runLand(
     config
   })
 
-  const whereToLook = latestWhereToLook(bodies)
+  const whereToLook = latestWhereToLook(own.map(item => item.body))
   const body = renderRiskComment({ headSha, decision, config, whereToLook })
   if (!publish) {
     return `dry run: ${statusDescription(decision)}\n${body}`
