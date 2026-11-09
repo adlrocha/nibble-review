@@ -1,5 +1,4 @@
-import { matchesGlob } from "node:path"
-
+import { minimatch } from "minimatch"
 import { parse as parseToml } from "smol-toml"
 import { z } from "zod"
 
@@ -53,8 +52,20 @@ export const BUILT_IN_ALWAYS_HUMAN: readonly string[] = [
   "**/build.gradle",
   "**/build.gradle.kts",
   "**/mix.exs",
-  "**/mix.lock"
+  "**/mix.lock",
+  "**/.npmrc",
+  "**/.cargo/config",
+  "**/.cargo/config.toml",
+  "**/build.rs",
+  "**/Dockerfile",
+  "**/Dockerfile.*",
+  "**/action.yml",
+  "**/action.yaml"
 ]
+
+// Dot directories and any letter case match too, so `.config/package.json` or
+// EF Core's `Migrations/` can't slip past a pattern.
+const GLOB_OPTIONS = { dot: true, nocase: true } as const
 
 const LandSettingsSchema = z
   .object({
@@ -146,7 +157,10 @@ export const LAND_VERDICTS: Readonly<Record<ReviewVerdictLabel, LandVerdict>> = 
  * markers go: anything else can't be parsed, and it may be text the author wants.
  */
 export function stripLandMarkers(text: string): string {
-  return text.replaceAll(new RegExp(VERDICT_RECORD_SOURCE, "gu"), "").replaceAll(RISK_COMMENT_MARKER, "")
+  // Repeat until nothing changes: removing a marker nested inside another
+  // would otherwise leave the outer one whole.
+  const once = text.replaceAll(new RegExp(VERDICT_RECORD_SOURCE, "gu"), "").replaceAll(RISK_COMMENT_MARKER, "")
+  return once === text ? text : stripLandMarkers(once)
 }
 
 /**
@@ -213,7 +227,7 @@ function countedLines(files: PullRequestFile[]): number {
 function alwaysHumanHits(files: PullRequestFile[], extra: readonly string[]): string[] {
   const patterns = [...BUILT_IN_ALWAYS_HUMAN, ...extra]
   const paths = files.flatMap(file => [file.filename, ...(file.previous_filename ? [file.previous_filename] : [])])
-  return [...new Set(paths.filter(path => patterns.some(pattern => matchesGlob(path, pattern))))].sort()
+  return [...new Set(paths.filter(path => patterns.some(pattern => minimatch(path, pattern, GLOB_OPTIONS))))].sort()
 }
 
 /** Describes how one test file got weaker, or null when it did not. */
