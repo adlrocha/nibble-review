@@ -17,6 +17,7 @@ permissions:
   contents: read
   issues: write
   pull-requests: write
+  statuses: write
 
 jobs:
   review:
@@ -38,4 +39,5 @@ jobs:
     steps:
       - uses: adlrocha/nibble-review@main
         with:
+          land: "true"
           api-key: ${{ secrets.OPENCODE_API_KEY }}
