@@ -31,7 +31,7 @@ A full run publishes:
 - a short top-level summary that does not repeat every inline comment;
 - one application-derived verdict: `⛔ Block`, `⚠️ Request changes`, or `✅ LGTM`.
 
-Follow-up events do not always need another full review. The gate can answer a direct question or return a quick `✅ LGTM` when the current head was already reviewed and the new change is safely contained.
+Follow-up events do not always need another full review. The gate can answer a direct question or return a quick `✅ LGTM` when the current head was already reviewed and the new change is safely contained. This also works after a rebase or force-push: before any repository code runs, the action fetches the previously reviewed commits by SHA, so the gate can compare the old and new patches. If GitHub no longer serves a commit, the follow-up gets a full review.
 
 ## How a review runs
 

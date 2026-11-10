@@ -1,5 +1,5 @@
 import assert from "node:assert/strict"
-import { execFileSync } from "node:child_process"
+import { execFileSync, spawnSync } from "node:child_process"
 import fs from "node:fs"
 import os from "node:os"
 import path from "node:path"
@@ -274,4 +274,93 @@ test("mention with incidental try again wording still uses the gate", () => {
 
   assert.equal(result.action, "agent")
   assert.equal(result.context.delta.mode, "same_head")
+})
+
+// Regression for force-pushed PRs (adlrocha/nibble-review#16): the checkout
+// holds only the current PR head, so a rebased-away reviewed commit is missing
+// locally even though GitHub still serves it by SHA. The action must fetch it
+// before the gate runs, or every rebase pays for a full review.
+const fetchReviewedCommits = path.resolve(import.meta.dirname, "..", "..", "bin", "fetch-reviewed-commits.sh")
+
+/** Simulates GitHub: an origin that kept the reviewed commit, and a checkout of only the rebased head. */
+function createForcePushedCheckout(t) {
+  const { repo: origin, reviewed, defaultBranch } = createRepo()
+  t.after(() => fs.rmSync(origin, { recursive: true, force: true }))
+  // GitHub serves any commit of the repository by SHA; plain git needs this opt-in.
+  git(origin, ["config", "uploadpack.allowAnySHA1InWant", "true"])
+  git(origin, ["checkout", defaultBranch])
+  write(origin, "README.md", "base\nnew base\n")
+  const newBase = commit(origin, "base update")
+  git(origin, ["checkout", "-b", "feature-rebased"])
+  write(origin, "src/app.js", "export const value = 1;\n")
+  const head = commit(origin, "feature reviewed rebased")
+  // The force-push removed the reviewed commit from every branch; only the object remains.
+  git(origin, ["branch", "-D", "feature"])
+
+  const checkout = fs.mkdtempSync(path.join(os.tmpdir(), "gate-checkout-"))
+  t.after(() => fs.rmSync(checkout, { recursive: true, force: true }))
+  execFileSync("git", ["clone", "--quiet", "--no-tags", "--branch", "feature-rebased", `file://${origin}`, checkout])
+  git(checkout, ["fetch", "--quiet", "origin", `${defaultBranch}:${defaultBranch}`])
+  const rawDiff = git(checkout, ["diff", `${newBase}..${head}`])
+  return { checkout, reviewed, newBase, head, rawDiff }
+}
+
+function runFetchReviewedCommits(checkout, shas) {
+  return spawnSync("bash", [fetchReviewedCommits, checkout, ...shas], {
+    encoding: "utf8",
+    env: { PATH: process.env.PATH, HOME: process.env.HOME }
+  })
+}
+
+test("force-pushed head: the checkout alone cannot reach the reviewed commit", t => {
+  const { checkout, reviewed, newBase, head, rawDiff } = createForcePushedCheckout(t)
+  const snapshot = reviewSnapshot(
+    { reason: "synchronize", base: newBase, head, reviews: [botReview(reviewed)] },
+    rawDiff
+  )
+
+  const result = prepareGate(snapshot, checkout)
+
+  assert.equal(result.action, "review")
+  assert.match(result.reason, /not available in the checkout/u)
+})
+
+test("force-pushed head: fetching the reviewed commit lets the gate compare the rebase", t => {
+  const { checkout, reviewed, newBase, head, rawDiff } = createForcePushedCheckout(t)
+  const fetched = runFetchReviewedCommits(checkout, [reviewed])
+  assert.equal(fetched.status, 0, fetched.stderr)
+
+  const snapshot = reviewSnapshot(
+    { reason: "synchronize", base: newBase, head, reviews: [botReview(reviewed)] },
+    rawDiff
+  )
+  const result = prepareGate(snapshot, checkout)
+
+  assert.equal(result.action, "agent")
+  assert.equal(result.context.delta.mode, "rebase_compare")
+  assert.equal(result.context.delta.patchIdsMatch, true)
+})
+
+test("force-pushed head: a reviewed commit GitHub no longer serves still falls back to a full review", t => {
+  const { checkout, newBase, head, rawDiff } = createForcePushedCheckout(t)
+  const missing = "0123456789abcdef0123456789abcdef01234567"
+  const fetched = runFetchReviewedCommits(checkout, [missing])
+  assert.equal(fetched.status, 0, "an unfetchable commit must never fail the review job")
+
+  const snapshot = reviewSnapshot(
+    { reason: "synchronize", base: newBase, head, reviews: [botReview(missing)] },
+    rawDiff
+  )
+  const result = prepareGate(snapshot, checkout)
+
+  assert.equal(result.action, "review")
+  assert.match(result.reason, /not available in the checkout/u)
+})
+
+test("fetching reviewed commits skips ones the checkout already has and rejects non-SHA arguments", t => {
+  const { checkout, head } = createForcePushedCheckout(t)
+
+  assert.equal(runFetchReviewedCommits(checkout, [head]).status, 0)
+  const rejected = runFetchReviewedCommits(checkout, ["--upload-pack=touch /tmp/pwned"])
+  assert.notEqual(rejected.status, 0, "only 40-hex SHAs may reach git fetch")
 })

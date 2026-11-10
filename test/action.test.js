@@ -167,3 +167,177 @@ test("land is opt-in and runs only after an accepted review", () => {
   const login = block => /REVIEW_BOT_LOGIN: (.+)/u.exec(block)[1]
   assert.equal(login(byName["Report land decision"]), login(byName["Review pull request"]))
 })
+
+const fetchScript = path.join(root, "bin", "fetch-reviewed-commits.sh")
+
+/** Runs the reviewed-commit fetch against a fake git that records argv and git env. */
+function runFetchWithFakeGit(t, shas, env = {}) {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nibble-fetch-"))
+  t.after(() => fs.rmSync(directory, { recursive: true, force: true }))
+  const log = path.join(directory, "git.log")
+  fs.writeFileSync(
+    path.join(directory, "git"),
+    `#!/usr/bin/env bash
+{ printf 'ARGV %s\\n' "$*"; env | grep -E '^(GIT_(CONFIG|FETCH|TERMINAL)|GH_TOKEN|GITHUB_TOKEN)' | sort; } >> "${log}"
+[[ " $* " == *" cat-file "* ]] && exit 1
+[[ -n "\${FAKE_GIT_SLEEP:-}" ]] && sleep "\${FAKE_GIT_SLEEP}"
+exit 0
+`
+  )
+  fs.chmodSync(path.join(directory, "git"), 0o755)
+  const result = spawnSync("bash", [fetchScript, directory, ...shas], {
+    encoding: "utf8",
+    env: { PATH: `${directory}:${process.env.PATH}`, ...env }
+  })
+  return { status: result.status, stdout: result.stdout, log: fs.existsSync(log) ? fs.readFileSync(log, "utf8") : "" }
+}
+
+test("the reviewed-commit fetch passes the token only through per-process git config", t => {
+  const sha = "a".repeat(40)
+  const token = "ghs_secretTokenValue"
+  const { status, log, stdout } = runFetchWithFakeGit(t, [sha], {
+    GIT_FETCH_TOKEN: token,
+    GH_TOKEN: token,
+    GITHUB_TOKEN: token,
+    GITHUB_ACTIONS: "true"
+  })
+  const encoded = Buffer.from(`x-access-token:${token}`).toString("base64")
+
+  assert.equal(status, 0)
+  assert.doesNotMatch(log, new RegExp(`ARGV .*(?:${token}|${encoded})`, "u"), "the token must never reach argv")
+  assert.doesNotMatch(log, /^(?:GIT_FETCH_TOKEN|GH_TOKEN|GITHUB_TOKEN)=/mu, "no raw token variable may reach git")
+  assert.match(log, /GIT_CONFIG_KEY_0=http\.https:\/\/github\.com\/\.extraheader/u)
+  assert.match(log, new RegExp(`GIT_CONFIG_VALUE_0=AUTHORIZATION: basic ${encoded}`, "u"))
+  assert.match(log, /GIT_TERMINAL_PROMPT=0/u)
+  assert.match(
+    log,
+    /ARGV .*-c core\.hooksPath=\/dev\/null -c maintenance\.auto=false -c gc\.auto=0 fetch --quiet --no-tags --no-recurse-submodules/u
+  )
+  assert.ok(stdout.includes(`::add-mask::${encoded}`), "the encoded header is masked in Actions logs")
+})
+
+test("the reviewed-commit fetch caps how many missing commits it fetches", t => {
+  const shas = ["1", "2", "3"].map(digit => digit.repeat(40))
+  const { status, log, stdout } = runFetchWithFakeGit(t, shas, { FETCH_REVIEWED_COMMITS_MAX: "2" })
+
+  assert.equal(status, 0)
+  assert.equal(log.match(/ARGV .* fetch /gu)?.length, 2)
+  assert.match(stdout, /skipped fetching older reviewed commits after 2/u)
+})
+
+test("the action fetches reviewed commits after checkout and before any repository code runs", () => {
+  const checkout = action.indexOf("- name: Check out pull request")
+  const fetch = action.indexOf("- name: Fetch previously reviewed commits")
+  const install = action.indexOf("- name: Install repository dependencies")
+  assert.ok(checkout >= 0 && fetch > checkout && install > fetch)
+
+  const step = action.slice(fetch, install)
+  assert.match(step, /continue-on-error: true/u)
+  assert.match(step, /bin\/latest-reviewed-commit\.sh/u)
+  assert.match(step, /REVIEW_BOT_LOGIN: \$\{\{ steps\.app-token\.outputs\.app-slug/u)
+  assert.match(step, /GIT_FETCH_TOKEN: \$\{\{ steps\.app-token\.outputs\.token \|\| inputs\.github-token \}\}/u)
+  assert.doesNotMatch(step.slice(step.indexOf("run: |")), /\$\{\{/u, "the run script takes inputs only from env")
+})
+
+test("the reviewed-commit fetch scopes the header to GITHUB_SERVER_URL and sets none without a token", t => {
+  const sha = "b".repeat(40)
+  const enterprise = runFetchWithFakeGit(t, [sha], {
+    GIT_FETCH_TOKEN: "tok",
+    GITHUB_SERVER_URL: "https://ghe.example.com"
+  })
+  assert.match(enterprise.log, /GIT_CONFIG_KEY_0=http\.https:\/\/ghe\.example\.com\/\.extraheader/u)
+
+  const anonymous = runFetchWithFakeGit(t, [sha])
+  assert.equal(anonymous.status, 0)
+  assert.doesNotMatch(anonymous.log, /GIT_CONFIG/u)
+  assert.doesNotMatch(anonymous.stdout, /add-mask/u)
+})
+
+test("the reviewed-commit fetch ignores invalid knobs and survives a hanging fetch", t => {
+  const shas = ["c", "d"].map(digit => digit.repeat(64))
+  const invalid = runFetchWithFakeGit(t, shas, { FETCH_REVIEWED_COMMITS_MAX: "a[$(touch /tmp/pwned)]" })
+  assert.equal(invalid.status, 0)
+  assert.equal(invalid.log.match(/ARGV .* fetch /gu)?.length, 2, "an invalid cap falls back to the default")
+
+  const started = Date.now()
+  const hung = runFetchWithFakeGit(t, [shas[0]], { FAKE_GIT_SLEEP: "30", FETCH_REVIEWED_COMMITS_TIMEOUT_SECONDS: "1" })
+  assert.equal(hung.status, 0)
+  assert.ok(Date.now() - started < 15_000, "the per-fetch timeout bounds a hanging fetch")
+  assert.match(hung.stdout, /is not fetchable; the gate will run a full review/u)
+})
+
+const latestScript = path.join(root, "bin", "latest-reviewed-commit.sh")
+
+/** Runs the latest-reviewed-commit lookup against a fake gh that prints the given output. */
+function runLatestWithFakeGh(t, ghOutput, env = {}, ghStatus = 0) {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nibble-latest-"))
+  t.after(() => fs.rmSync(directory, { recursive: true, force: true }))
+  fs.writeFileSync(path.join(directory, "gh.out"), ghOutput)
+  fs.writeFileSync(
+    path.join(directory, "gh"),
+    `#!/usr/bin/env bash\necho "$*" > "${directory}/gh.args"\ncat "${directory}/gh.out"\nexit ${ghStatus}\n`
+  )
+  fs.chmodSync(path.join(directory, "gh"), 0o755)
+  const result = spawnSync("bash", [latestScript], {
+    encoding: "utf8",
+    env: {
+      PATH: `${directory}:${process.env.PATH}`,
+      GITHUB_REPOSITORY: "owner/repo",
+      PR_NUMBER: "42",
+      REVIEW_BOT_LOGIN: "github-actions[bot]",
+      ...env
+    }
+  })
+  const args = fs.existsSync(path.join(directory, "gh.args"))
+    ? fs.readFileSync(path.join(directory, "gh.args"), "utf8").trim()
+    : null
+  return { status: result.status, stdout: result.stdout.trim(), args }
+}
+
+const marked = "Review body\n\n<!-- nibble-review -->"
+const review = (login, commitId, body = marked) => ({ user: { login }, body, commit_id: commitId })
+
+test("the latest reviewed commit is this reviewer's newest marked review across pages", t => {
+  const [older, latest, human, unmarked] = ["1", "2", "3", "4"].map(digit => digit.repeat(40))
+  const page1 = [review("github-actions[bot]", older), review("octocat", human, "LGTM")]
+  const page2 = [
+    review("github-actions[bot]", latest),
+    review("github-actions[bot]", unmarked, "Lint passed"),
+    review("octocat", human),
+    review("github-actions[bot]", null),
+    { user: null, body: marked, commit_id: human }
+  ]
+  const { status, stdout, args } = runLatestWithFakeGh(t, JSON.stringify(page1) + JSON.stringify(page2))
+
+  assert.equal(status, 0)
+  assert.equal(stdout, latest)
+  assert.equal(args, "api repos/owner/repo/pulls/42/reviews?per_page=100 --paginate")
+})
+
+test("a dedicated App login does not need the marker", t => {
+  const sha = "5".repeat(40)
+  const { stdout } = runLatestWithFakeGh(t, JSON.stringify([review("nibble[bot]", sha, "no marker")]), {
+    REVIEW_BOT_LOGIN: "nibble[bot]"
+  })
+  assert.equal(stdout, sha)
+})
+
+test("the latest reviewed commit lookup prints nothing and succeeds on any failure", t => {
+  assert.deepEqual(
+    [runLatestWithFakeGh(t, "", {}, 1).status, runLatestWithFakeGh(t, "", {}, 1).stdout],
+    [0, ""],
+    "a gh failure is not a job failure"
+  )
+  assert.equal(runLatestWithFakeGh(t, "not json").stdout, "")
+  assert.equal(runLatestWithFakeGh(t, "[]").stdout, "")
+  const badInput = runLatestWithFakeGh(t, "[]", { PR_NUMBER: "42; rm -rf /" })
+  assert.equal(badInput.status, 0)
+  assert.equal(badInput.args, null, "an invalid PR number never reaches gh")
+})
+
+test("the lookup's marker and shared logins match the reviewer's authorship rules", async () => {
+  const { REVIEW_MARKER, SHARED_BOT_LOGINS } = await import("../dist/lib/review-authorship.js")
+  const script = fs.readFileSync(latestScript, "utf8")
+  assert.ok(script.includes(`marker="${REVIEW_MARKER}"`))
+  assert.ok(script.includes(`shared_logins='${JSON.stringify([...SHARED_BOT_LOGINS])}'`))
+})
