@@ -255,8 +255,11 @@ test("the reviewed-commit fetch scopes the header to GITHUB_SERVER_URL and sets 
 
 test("the reviewed-commit fetch ignores invalid knobs and survives a hanging fetch", t => {
   const shas = ["c", "d"].map(digit => digit.repeat(64))
-  const invalid = runFetchWithFakeGit(t, shas, { FETCH_REVIEWED_COMMITS_MAX: "a[$(touch /tmp/pwned)]" })
+  const canary = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "nibble-canary-")), "pwned")
+  t.after(() => fs.rmSync(path.dirname(canary), { recursive: true, force: true }))
+  const invalid = runFetchWithFakeGit(t, shas, { FETCH_REVIEWED_COMMITS_MAX: `a[$(touch ${canary})]` })
   assert.equal(invalid.status, 0)
+  assert.equal(fs.existsSync(canary), false, "an env knob must never be evaluated as code")
   assert.equal(invalid.log.match(/ARGV .* fetch /gu)?.length, 2, "an invalid cap falls back to the default")
 
   const started = Date.now()
@@ -333,6 +336,36 @@ test("the latest reviewed commit lookup prints nothing and succeeds on any failu
   const badInput = runLatestWithFakeGh(t, "[]", { PR_NUMBER: "42; rm -rf /" })
   assert.equal(badInput.status, 0)
   assert.equal(badInput.args, null, "an invalid PR number never reaches gh")
+})
+
+test("the lookup selects the same commit as the gate's latestBotReview", async t => {
+  const { compareReviewHistory } = await import("../dist/lib/review-gate.js")
+  const [a, b, c, d] = ["a", "b", "c", "d"].map(digit => digit.repeat(40))
+  const fixtures = [
+    {
+      login: "github-actions[bot]",
+      reviews: [
+        review("github-actions[bot]", a),
+        review("github-actions[bot]", b),
+        review("github-actions[bot]", c, "Lint passed"),
+        review("octocat", d)
+      ]
+    },
+    { login: "github-actions[bot]", reviews: [review("octocat", a), review("github-actions[bot]", null)] },
+    { login: "nibble[bot]", reviews: [review("nibble[bot]", a, "unmarked"), review("github-actions[bot]", b)] },
+    { login: "github-actions[bot]", reviews: [] }
+  ]
+  const workspace = fs.mkdtempSync(path.join(os.tmpdir(), "nibble-parity-"))
+  t.after(() => fs.rmSync(workspace, { recursive: true, force: true }))
+
+  for (const { login, reviews } of fixtures) {
+    const gate = compareReviewHistory(
+      { botLogin: login, reviews, pullRequest: { headRefOid: null, baseRefOid: null } },
+      workspace
+    ).previousReview?.commitId
+    const lookup = runLatestWithFakeGh(t, JSON.stringify(reviews), { REVIEW_BOT_LOGIN: login }).stdout
+    assert.equal(lookup, gate ?? "", `${login} over ${JSON.stringify(reviews.map(r => r.commit_id))}`)
+  }
 })
 
 test("the lookup's marker and shared logins match the reviewer's authorship rules", async () => {
