@@ -436,6 +436,7 @@ test("finished lanes are reused only inside the review step and never cached", t
   assert.equal(on.keyUnset, true)
   assert.equal(fs.existsSync(on.dir), false, "the directory is removed when the step ends")
 
-  const off = runReviewStep(t, { REUSE_LANES: "false" })
+  // Off is authoritative even when the workflow sets the local-run variable.
+  const off = runReviewStep(t, { REUSE_LANES: "false", NIBBLE_REVIEW_LANE_CACHE: "/tmp/elsewhere" })
   assert.equal(off.dir, "")
 })

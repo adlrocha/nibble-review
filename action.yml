@@ -212,6 +212,8 @@ runs:
           NIBBLE_REVIEW_LANE_CACHE=$(mktemp -d "${RUNNER_TEMP}/nibble-review-lanes.XXXXXX")
           export NIBBLE_REVIEW_LANE_CACHE
           trap 'rm -rf "$NIBBLE_REVIEW_LANE_CACHE"' EXIT
+        else
+          unset NIBBLE_REVIEW_LANE_CACHE
         fi
         bash "$GITHUB_ACTION_PATH/bin/review-with-fallback.sh"
 

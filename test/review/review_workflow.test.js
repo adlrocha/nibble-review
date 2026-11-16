@@ -1811,3 +1811,16 @@ test("a deadline keeps the lanes even when every one had finished", async t => {
   )
   assert.equal(fs.readdirSync(laneCheckpointDirectory).length, laneNames.length)
 })
+
+test("a lane that returns no text is kept with the queue's neutral handoff", async t => {
+  const laneCheckpointDirectory = checkpointDirectory(t)
+  const provider = reviewProvider({ laneSummaries: { "intent-contract": "   " } })
+  await runReview(
+    reviewOptions(t, fakeGitHub().client, { laneCheckpointDirectory, laneCheckpointSecret }),
+    () => provider
+  )
+  assert.equal(
+    readCheckpoint(laneCheckpointDirectory, "intent-contract").summary,
+    "Review completed without an additional assessment."
+  )
+})

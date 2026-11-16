@@ -251,7 +251,7 @@ GH_TOKEN=$(gh auth token) OPENCODE_API_KEY=... node dist/cli/review.js --repo OW
 
 Without `--publish` nothing is written to GitHub; the full result, including the exact review that would be posted, is printed as JSON.
 
-Set `NIBBLE_REVIEW_LANE_CACHE` to a directory to keep finished lanes between local runs of the same head; they are signed with the key named by `API_KEY_ENV` (default `OPENCODE_API_KEY`).
+Set `NIBBLE_REVIEW_LANE_CACHE` to a directory to keep finished lanes between local runs of the same head; they are signed with the key named by `API_KEY_ENV` (default `OPENCODE_API_KEY`). Reuse ignores the model, so use a fresh directory when comparing models.
 
 ## Development
 

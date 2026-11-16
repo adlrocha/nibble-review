@@ -71,9 +71,9 @@ export const ReviewLane: AML.Component<ReviewLaneProps> = async ({ lane, childre
     </Agent>
   )
 
-  queue.complete(lane, assessment)
+  const summary = queue.complete(lane, assessment)
   checkpoints?.store.save(lane, checkpoints.scope, {
-    summary: assessment,
+    summary,
     findings: queue
       .staged()
       .filter(staged => staged.lane === lane)

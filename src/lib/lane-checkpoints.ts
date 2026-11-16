@@ -3,7 +3,7 @@ import { mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync
 import { join } from "node:path"
 import { z } from "zod"
 
-import { contextReferenceSignature, type CompactPullRequestContext } from "../services/github/context-model.js"
+import { contextReferenceSignatures, type CompactPullRequestContext } from "../services/github/context-model.js"
 import { REVIEW_LANE_NAMES, ReviewFindingSchema, type ReviewFinding, type ReviewLaneName } from "./review-queue.js"
 
 /**
@@ -52,9 +52,10 @@ const SignedFileSchema = z
  * review holds (the model provider key), so a file it did not write is never
  * taken for a lane's work.
  *
- * A checkpoint only counts for the exact head and base it was written for. A
- * file that is missing, unsigned, malformed or for another revision is a miss,
- * so the lane simply runs again. Writes never fail the review.
+ * A checkpoint only counts for the exact head, base and contract hash (title,
+ * description, and referenced issues and pull requests) it was written for, and
+ * it ignores the model. A file that is missing, unsigned, malformed or for
+ * another scope is a miss, so the lane simply runs again. Writes never fail the review.
  */
 export class LaneCheckpoints {
   readonly #directory: string
@@ -112,7 +113,7 @@ export class LaneCheckpoints {
       base: scope.base,
       contract: scope.contract,
       lane,
-      summary: checkpoint.summary.trim() || "Review completed without an additional assessment.",
+      summary: checkpoint.summary,
       findings: checkpoint.findings
     })
     if (!parsed.success) {
@@ -181,7 +182,7 @@ export function laneCheckpointScope(
   if (!head.success || !base.success) {
     return null
   }
-  const references = [...context.issues, ...context.pullRequests].map(contextReferenceSignature).toSorted()
+  const references = contextReferenceSignatures(context)
   const contract = createHash("sha256")
     .update(JSON.stringify({ title: context.title, description: context.description, references }))
     .digest("hex")

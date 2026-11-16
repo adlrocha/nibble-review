@@ -47,10 +47,10 @@ test("a finished lane round-trips for its own head and base only", t => {
   assert.equal(mode(path.join(dir, "code-path-bug-hunter.json")), 0o600)
 })
 
-test("a blank summary is stored as a neutral handoff", t => {
+test("a blank summary is not stored: the queue owns the neutral handoff", t => {
   const store = new LaneCheckpoints(directory(t), secret)
   store.save("intent-contract", scope, { summary: "  ", findings: [] })
-  assert.equal(store.load("intent-contract", scope)?.summary, "Review completed without an additional assessment.")
+  assert.equal(store.load("intent-contract", scope), null)
 })
 
 test("malformed, unsigned, forged, foreign, or invalid checkpoints are misses", t => {

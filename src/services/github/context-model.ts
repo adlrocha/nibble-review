@@ -150,6 +150,13 @@ export function selectRelatedReferences(input: {
   )
 }
 
+/** The sorted signatures of every issue and pull request a review's context references. */
+export function contextReferenceSignatures(
+  context: Pick<CompactPullRequestContext, "issues" | "pullRequests">
+): string[] {
+  return [...context.issues, ...context.pullRequests].map(contextReferenceSignature).toSorted()
+}
+
 /** Defines one freshness vocabulary for reviewed records and uncached GitHub reads. */
 export function contextReferenceSignature(
   reference:

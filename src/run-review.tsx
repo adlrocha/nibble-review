@@ -126,9 +126,10 @@ export async function runReview(
       error: null
     })
     selected = environment.outcome.result()
-    // A posted review (or a gate verdict) settles this head, so the next review
+    // A posted review or no-review verdict settles this head, so the next review
     // starts fresh. Dry runs, answers to questions and failed posts keep lanes.
-    if (options.actionMode === "live" && !selected.publicationError && selected.review.status !== "answered") {
+    const settled = selected.review.status === "reviewed" || selected.review.status === "no-review"
+    if (options.actionMode === "live" && !selected.publicationError && settled) {
       environment.checkpoints?.clear()
     }
   } catch (error) {
