@@ -9,7 +9,7 @@ import { laneCheckpointOptions } from "../../dist/cli/review.js"
 import { signedCheckpoint } from "../helpers/lane-checkpoints.js"
 
 const secret = "provider-key"
-const scope = { head: "2".repeat(40), base: "1".repeat(40) }
+const scope = { head: "2".repeat(40), base: "1".repeat(40), contract: "c".repeat(64) }
 const finding = {
   kind: "inline",
   severity: "low",
@@ -39,6 +39,7 @@ test("a finished lane round-trips for its own head and base only", t => {
 
   assert.equal(store.load("code-path-bug-hunter", { ...scope, head: "3".repeat(40) }), null)
   assert.equal(store.load("code-path-bug-hunter", { ...scope, base: "3".repeat(40) }), null)
+  assert.equal(store.load("code-path-bug-hunter", { ...scope, contract: "d".repeat(64) }), null)
   assert.equal(store.load("intent-contract", scope), null)
 
   const mode = file => fs.statSync(file).mode & 0o777
@@ -150,10 +151,41 @@ test("an unwritable directory only costs a re-run", t => {
   assert.match(lines.at(-1), /could not be cleared/u)
 })
 
-test("the scope needs both full commit SHAs", () => {
-  assert.deepEqual(laneCheckpointScope({ headRefOid: scope.head, baseRefOid: scope.base }), scope)
-  assert.equal(laneCheckpointScope({ headRefOid: scope.head, baseRefOid: null }), null)
-  assert.equal(laneCheckpointScope({ headRefOid: "abc", baseRefOid: scope.base }), null)
+test("the scope needs both full commit SHAs and changes with the stated contract", () => {
+  const issue = { kind: "issue", relation: "closes", repository: "o/r", number: 7, updatedAt: "2026-11-16T10:00:00Z" }
+  const context = {
+    headRefOid: scope.head,
+    baseRefOid: scope.base,
+    title: "Fix it",
+    description: "Closes #7",
+    issues: [issue],
+    pullRequests: []
+  }
+  const base = laneCheckpointScope(context)
+  assert.equal(base.head, scope.head)
+  assert.equal(base.base, scope.base)
+  assert.match(base.contract, /^[0-9a-f]{64}$/u)
+  assert.deepEqual(laneCheckpointScope({ ...context }), base)
+  for (const changed of [
+    { title: "Fix it properly" },
+    { description: "Closes #7 and more" },
+    { issues: [{ ...issue, updatedAt: "2026-11-16T11:00:00Z" }] },
+    { issues: [] }
+  ]) {
+    assert.notEqual(laneCheckpointScope({ ...context, ...changed }).contract, base.contract, JSON.stringify(changed))
+  }
+  assert.equal(laneCheckpointScope({ ...context, baseRefOid: null }), null)
+  assert.equal(laneCheckpointScope({ ...context, headRefOid: "abc" }), null)
+})
+
+test("clearing leaves files the store did not write", t => {
+  const dir = directory(t)
+  const store = new LaneCheckpoints(dir, secret)
+  store.save("intent-contract", scope, { summary: "a", findings: [] })
+  fs.writeFileSync(path.join(dir, "intent-contract.json.123.tmp"), "partial")
+  fs.writeFileSync(path.join(dir, "notes.txt"), "mine")
+  store.clear()
+  assert.deepEqual(fs.readdirSync(dir).sort(), ["notes.txt", "published.json"])
 })
 
 test("the CLI turns checkpoints on only with a directory and the provider key", () => {

@@ -391,6 +391,7 @@ function reviewProvider(options = {}) {
 
       if (request.system.includes("calibrate pull-request findings")) {
         if (options.auditFailure) {
+          options.onAuditFailure?.()
           throw new Error("audit unavailable")
         }
         for (const action of options.auditActions || []) {
@@ -1702,25 +1703,31 @@ test("a failed attempt keeps its finished lanes, and the next attempt runs only 
   assert.deepEqual(fs.readdirSync(laneCheckpointDirectory), ["published.json"])
 })
 
+/** Reads a lane checkpoint written by a real run, so planted files carry the run's scope. */
+function readCheckpoint(directory, lane) {
+  return JSON.parse(JSON.parse(fs.readFileSync(path.join(directory, `${lane}.json`), "utf8")).checkpoint)
+}
+
 test("restored lanes skip a reply whose comment is gone and keep their other findings", async t => {
   const laneCheckpointDirectory = checkpointDirectory(t)
-  const scope = { head: "2222222222222222222222222222222222222222", base: "1111111111111111111111111111111111111111" }
+  const options = { laneCheckpointDirectory, laneCheckpointSecret }
+  // A dry run publishes nothing, so all six lanes stay on disk for the next run.
+  await runReview(reviewOptions(t, fakeGitHub().client, options), () => reviewProvider())
+  assert.equal(fs.readdirSync(laneCheckpointDirectory).length, laneNames.length)
+
   const reply = { kind: "reply", body: "Still applies.", evidence: "Unchanged line.", to: 999 }
-  for (const lane of laneNames) {
-    const findings = lane === "code-path-bug-hunter" ? [finding, reply] : []
-    fs.writeFileSync(
-      path.join(laneCheckpointDirectory, `${lane}.json`),
-      signedCheckpoint({ version: 1, ...scope, lane, summary: `${lane} restored.`, findings }, laneCheckpointSecret)
+  const hunter = readCheckpoint(laneCheckpointDirectory, "code-path-bug-hunter")
+  fs.writeFileSync(
+    path.join(laneCheckpointDirectory, "code-path-bug-hunter.json"),
+    signedCheckpoint(
+      { ...hunter, summary: "code-path-bug-hunter restored.", findings: [finding, reply] },
+      laneCheckpointSecret
     )
-  }
+  )
   const provider = reviewProvider({ laneInputs: {} })
   const progress = []
   const result = await runReview(
-    reviewOptions(t, fakeGitHub().client, {
-      laneCheckpointDirectory,
-      laneCheckpointSecret,
-      progress: line => progress.push(line)
-    }),
+    reviewOptions(t, fakeGitHub().client, { ...options, progress: line => progress.push(line) }),
     () => provider
   )
   assert.deepEqual(provider.calls.map(call => laneName(call.request.prompt)).filter(Boolean), [])
@@ -1728,8 +1735,16 @@ test("restored lanes skip a reply whose comment is gone and keep their other fin
   assert.equal(result.validated.inlineComments.length, 1)
   assert.equal(result.validated.replies.length, 0)
   assert.ok(progress.some(line => /code-path-bug-hunter: dropped a restored finding/u.test(line)))
-  // A dry run publishes nothing, so the lanes stay for the next run.
-  assert.equal(fs.readdirSync(laneCheckpointDirectory).length, laneNames.length)
+})
+
+test("a changed description makes every kept lane run again", async t => {
+  const laneCheckpointDirectory = checkpointDirectory(t)
+  const options = { laneCheckpointDirectory, laneCheckpointSecret }
+  await runReview(reviewOptions(t, fakeGitHub().client, options), () => reviewProvider())
+  const edited = fakeGitHub({ pullRequest: { body: "Keep responses fresh, and say why." } })
+  const provider = reviewProvider()
+  await runReview(reviewOptions(t, edited.client, options), () => provider)
+  assert.equal(provider.calls.map(call => laneName(call.request.prompt)).filter(Boolean).length, 6)
 })
 
 test("checkpoints for another head are ignored and every lane runs", async t => {
@@ -1738,7 +1753,7 @@ test("checkpoints for another head are ignored and every lane runs", async t => 
   fs.writeFileSync(
     path.join(laneCheckpointDirectory, "intent-contract.json"),
     signedCheckpoint(
-      { version: 1, ...old, lane: "intent-contract", summary: "Old head.", findings: [] },
+      { version: 1, ...old, contract: "c".repeat(64), lane: "intent-contract", summary: "Old head.", findings: [] },
       laneCheckpointSecret
     )
   )
@@ -1778,4 +1793,21 @@ test("checkpoints stay off without a signing secret", async t => {
   const laneCheckpointDirectory = checkpointDirectory(t)
   await runReview(reviewOptions(t, fakeGitHub().client, { laneCheckpointDirectory }), () => reviewProvider())
   assert.deepEqual(fs.readdirSync(laneCheckpointDirectory), [])
+})
+
+test("a deadline keeps the lanes even when every one had finished", async t => {
+  const laneCheckpointDirectory = checkpointDirectory(t)
+  const deadline = new AbortController()
+  const provider = reviewProvider({
+    auditFailure: true,
+    onAuditFailure: () => deadline.abort(new Error("review deadline of 1740s reached"))
+  })
+  await assert.rejects(
+    runReview(
+      reviewOptions(t, fakeGitHub().client, { laneCheckpointDirectory, laneCheckpointSecret, signal: deadline.signal }),
+      () => provider
+    ),
+    { name: "ReviewUnavailableError" }
+  )
+  assert.equal(fs.readdirSync(laneCheckpointDirectory).length, laneNames.length)
 })

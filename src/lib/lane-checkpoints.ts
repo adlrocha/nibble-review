@@ -1,12 +1,18 @@
-import { createHmac, hkdfSync, timingSafeEqual } from "node:crypto"
+import { createHash, createHmac, hkdfSync, timingSafeEqual } from "node:crypto"
 import { mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
 import { z } from "zod"
 
+import { contextReferenceSignature, type CompactPullRequestContext } from "../services/github/context-model.js"
 import { REVIEW_LANE_NAMES, ReviewFindingSchema, type ReviewFinding, type ReviewLaneName } from "./review-queue.js"
 
-/** The pull-request revision a lane reviewed: its diff is fixed by both commits. */
-export type LaneCheckpointScope = Readonly<{ head: string; base: string }>
+/**
+ * What a lane reviewed: the diff, fixed by the head and base commits, and the
+ * stated contract (title, description, and the referenced issues and pull
+ * requests at their last update), the same evidence the publication freshness
+ * check guards.
+ */
+export type LaneCheckpointScope = Readonly<{ head: string; base: string; contract: string }>
 
 /** What a finished lane handed over: its closing summary and every finding it staged. */
 export type LaneCheckpoint = Readonly<{ summary: string; findings: ReviewFinding[] }>
@@ -14,12 +20,15 @@ export type LaneCheckpoint = Readonly<{ summary: string; findings: ReviewFinding
 const CHECKPOINT_VERSION = 1
 const SHA = z.string().regex(/^[0-9a-f]{40}$/u)
 const PUBLISHED_MARKER = "published.json"
+/** A lane's checkpoint, or a temporary file left by an interrupted write. */
+const OWN_FILE = new RegExp(`^(?:${REVIEW_LANE_NAMES.join("|")})\\.json(?:\\.\\d+\\.tmp)?$`, "u")
 
 const CheckpointSchema = z
   .object({
     version: z.literal(CHECKPOINT_VERSION),
     head: SHA,
     base: SHA,
+    contract: z.string().regex(/^[0-9a-f]{64}$/u),
     lane: z.enum(REVIEW_LANE_NAMES),
     summary: z.string().trim().min(1),
     findings: z.array(ReviewFindingSchema)
@@ -83,7 +92,12 @@ export class LaneCheckpoints {
       this.#progress(`↺ lane checkpoint ${lane}: ignored an unreadable or unsigned checkpoint`)
       return null
     }
-    if (parsed.lane !== lane || parsed.head !== scope.head || parsed.base !== scope.base) {
+    if (
+      parsed.lane !== lane ||
+      parsed.head !== scope.head ||
+      parsed.base !== scope.base ||
+      parsed.contract !== scope.contract
+    ) {
       return null
     }
     this.#finished.add(lane)
@@ -98,6 +112,7 @@ export class LaneCheckpoints {
       version: CHECKPOINT_VERSION,
       head: scope.head,
       base: scope.base,
+      contract: scope.contract,
       lane,
       summary: checkpoint.summary.trim() || "Review completed without an additional assessment.",
       findings: checkpoint.findings
@@ -129,14 +144,17 @@ export class LaneCheckpoints {
   }
 
   /**
-   * Drops every stored lane, leaving a marker so a saved copy of this
-   * directory replaces older ones that still held lanes.
+   * Drops every stored lane and leaves a marker file. The marker is never read:
+   * it keeps the directory non-empty so the action's cache save still stores
+   * it, and that newest, lane-free entry is what the next run restores instead
+   * of an older one that still held lanes. Only this class's own files are
+   * removed, so a shared directory keeps everything else.
    */
   clear(): void {
     try {
       mkdirSync(this.#directory, { recursive: true, mode: 0o700 })
       for (const entry of readdirSync(this.#directory)) {
-        if (entry !== PUBLISHED_MARKER) {
+        if (OWN_FILE.test(entry)) {
           rmSync(join(this.#directory, entry), { force: true })
         }
       }
@@ -157,12 +175,21 @@ export class LaneCheckpoints {
   }
 }
 
-/** The revision a review covers, or null when GitHub did not report both commits. */
-export function laneCheckpointScope(context: {
-  headRefOid: string | null
-  baseRefOid: string | null
-}): LaneCheckpointScope | null {
+/** The revision and contract a review covers, or null when GitHub did not report both commits. */
+export function laneCheckpointScope(
+  context: Pick<
+    CompactPullRequestContext,
+    "headRefOid" | "baseRefOid" | "title" | "description" | "issues" | "pullRequests"
+  >
+): LaneCheckpointScope | null {
   const head = SHA.safeParse(context.headRefOid)
   const base = SHA.safeParse(context.baseRefOid)
-  return head.success && base.success ? { head: head.data, base: base.data } : null
+  if (!head.success || !base.success) {
+    return null
+  }
+  const references = [...context.issues, ...context.pullRequests].map(contextReferenceSignature).toSorted()
+  const contract = createHash("sha256")
+    .update(JSON.stringify({ title: context.title, description: context.description, references }))
+    .digest("hex")
+  return { head: head.data, base: base.data, contract }
 }

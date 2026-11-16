@@ -88,7 +88,7 @@ Replies to existing inline threads remain inline replies. Top-level questions or
 - Land is advisory and separate from review publication: it runs after publication with no model, writes only a replaceable `## Risk` comment and a per-commit status, and its failures are warnings.
 - A verdict record counts only at the end of a body this reviewer wrote, and publication strips land's markers from model text.
 
-The workflow's 40-minute process ceiling is a stuck-provider safety boundary, not an expected review duration. Performance is measured separately in evals.
+The workflow's 75-minute job ceiling (two 30-minute attempts plus setup) is a stuck-provider safety boundary, not an expected review duration. Performance is measured separately in evals.
 
 ## Security
 
