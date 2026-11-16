@@ -19,7 +19,7 @@ Nibble Review provides actionable, evidence-backed pull-request review with the 
 - Review of fork code with repository secrets.
 - A second full-PR investigation during audit or synthesis.
 - Comment quotas, forced findings, or severity inflation to satisfy a score.
-- File-backed handoffs between Agents.
+- File-backed handoffs between Agents, except lane checkpoints: a finished lane's summary and staged findings, signed, scoped to the head, base and PR contract, and handed only from a failed attempt to the fallback attempt inside the same review step.
 - Provider-specific orchestration hidden behind a custom runner.
 
 ## Review contract
@@ -77,7 +77,7 @@ Replies to existing inline threads remain inline replies. Top-level questions or
 ## Reliability
 
 - Any failed parallel lane fails the full review.
-- An incomplete provider attempt never produces a publishable result.
+- An incomplete provider attempt never produces a publishable result. Its finished lanes may be reused by the fallback attempt in the same job; the fallback still runs every unfinished lane, the audit and the synthesis itself. Lanes are kept after a deadline or a lane failure, and dropped when every lane finished and a later phase failed on its own.
 - Audit failure never falls back to unaudited lane output.
 - Publication verifies the current head against the reviewed head.
 - Publication rechecks referenced issue timestamps and related PR timestamps and heads against the gathered context.
@@ -88,7 +88,7 @@ Replies to existing inline threads remain inline replies. Top-level questions or
 - Land is advisory and separate from review publication: it runs after publication with no model, writes only a replaceable `## Risk` comment and a per-commit status, and its failures are warnings.
 - A verdict record counts only at the end of a body this reviewer wrote, and publication strips land's markers from model text.
 
-The workflow's 40-minute process ceiling is a stuck-provider safety boundary, not an expected review duration. Performance is measured separately in evals.
+The workflow's 75-minute job ceiling (two 30-minute attempts plus setup) is a stuck-provider safety boundary, not an expected review duration. Performance is measured separately in evals.
 
 ## Security
 

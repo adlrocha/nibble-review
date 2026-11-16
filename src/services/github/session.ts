@@ -9,7 +9,12 @@ import type {
   ReviewThreadsResult
 } from "./client.js"
 import { GitHubContextService } from "./context.js"
-import { CONTEXT_REFERENCE_BATCH_SIZE, contextReferenceSignature, selectRelatedReferences } from "./context-model.js"
+import {
+  CONTEXT_REFERENCE_BATCH_SIZE,
+  contextReferenceSignature,
+  contextReferenceSignatures,
+  selectRelatedReferences
+} from "./context-model.js"
 import { ReviewEvidence } from "../review-evidence.js"
 import { ReviewDiff } from "../../lib/review-diff.js"
 import type { ReviewRequest, ReviewSnapshot } from "../../types/review.js"
@@ -273,9 +278,7 @@ export class GitHubReviewSession {
       ),
       ...latestRelated
     ].toSorted()
-    const reviewedReferences = [...snapshot.context.issues, ...snapshot.context.pullRequests]
-      .map(contextReferenceSignature)
-      .toSorted()
+    const reviewedReferences = contextReferenceSignatures(snapshot.context)
 
     // Issue `updatedAt` covers body, comment, and lifecycle changes without
     // replaying every compact history event solely for a freshness comparison.

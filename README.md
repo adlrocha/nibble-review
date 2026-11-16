@@ -139,7 +139,8 @@ Models investigate and write. They do not decide which commit was reviewed, whet
 | `install-dependencies` | `false` | Install the repository's npm/pnpm/yarn dependencies first. Runs their install scripts. |
 | `emojis` | `true` | Prefix inline comments with severity emojis. |
 | `land` | `false` | Report whether each head could merge without a person. See [Land](#land). |
-| `timeout-minutes` | `20` | Upper bound for each review attempt. |
+| `timeout-minutes` | `30` | Upper bound for each review attempt. |
+| `reuse-lanes` | `true` | Let the fallback attempt reuse the lanes the failed attempt finished, within the same job. See below. |
 
 Use another provider by changing two inputs:
 
@@ -154,7 +155,9 @@ Use another provider by changing two inputs:
 
 If you change `command`, change the mention in your workflow's `if:` filter to match.
 
-A review that has published nothing a minute before `timeout-minutes` gives up and hands over to the fallback model, so a slow primary model doesn't fail the check. Publication failures, and timeouts after publishing has started, never trigger the fallback, because their GitHub mutation outcome may be ambiguous. The job's own `timeout-minutes` should cover two attempts (the example uses 45). Each run writes a job summary with the model, Agent turns, token usage, estimated cost (from pi's model catalog, not a reconciled bill), comment counts, and publication status.
+A review that has published nothing a minute before `timeout-minutes` gives up and hands over to the fallback model, so a slow primary model doesn't fail the check. Publication failures, and timeouts after publishing has started, never trigger the fallback, because their GitHub mutation outcome may be ambiguous. The job's own `timeout-minutes` should cover two attempts (the example uses 75). **Upgrading from v1.1.x:** the attempt default rose from 20 to 30 minutes, so raise a job timeout of 45 to 75, or set `timeout-minutes: 20` on the action to keep the old budget. Each run writes a job summary with the model, Agent turns, token usage, estimated cost (from pi's model catalog, not a reconciled bill), comment counts, and publication status.
+
+**Lane reuse.** One slow lane used to throw away an attempt's other five finished lanes, and the fallback then ran all six again. Each lane is now saved the moment it finishes, so the fallback attempt runs only the lanes that did not finish. The saved lanes live in a fresh temporary directory of the review step, deleted when it ends: they are never cached or shared with another run, so a re-run reviews from scratch. If every lane finished and a later step failed on its own, the lanes are dropped, so the fallback model reviews from scratch rather than inheriting output that may have caused the failure. Reuse is off when `install-dependencies` is on, because install scripts run in this job.
 
 ## Land
 
@@ -230,6 +233,7 @@ Use a GitHub App for `app-client-id`/`app-private-key`: pushes made with the def
 - Every Agent runs with read-only filesystem access and no shell or network.
 - Every published body is scrubbed of secret-looking environment values and carries a hidden `<!-- nibble-review -->` marker, so a shared `github-actions[bot]` login is never confused with other workflows' comments.
 - Every model phase sees the same cached GitHub snapshot and filtered diff. A failed lane, audit, finalization, synthesis, or model run leaves nothing to publish.
+- Lanes reused by the fallback attempt come only from the same review step, in a temporary directory that is removed when it ends and never cached. They are signed with a key derived from the provider key, pass the same finding schema and anchor checks as a live lane, and must match the exact head, base and PR contract. Reuse is off in a job that runs repository install scripts.
 - The CLI is dry-run by default; live GitHub mutations require `--publish`. Publication re-checks the PR head and never replays an ambiguous failed mutation.
 
 Pull request text, comments, diffs, repository files, and linked GitHub content are untrusted evidence. They cannot grant tools or change the review contract. Dependency installation is opt-in because package scripts run with the job's credentials available.
@@ -246,6 +250,8 @@ GH_TOKEN=$(gh auth token) OPENCODE_API_KEY=... node dist/cli/review.js --repo OW
 ```
 
 Without `--publish` nothing is written to GitHub; the full result, including the exact review that would be posted, is printed as JSON.
+
+Set `NIBBLE_REVIEW_LANE_CACHE` to a directory to keep finished lanes between local runs of the same head; they are signed with the key named by `API_KEY_ENV` (default `OPENCODE_API_KEY`). Reuse ignores the model, so use a fresh directory when comparing models.
 
 ## Development
 

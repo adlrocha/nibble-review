@@ -249,10 +249,11 @@ export class ReviewQueue {
     return { id }
   }
 
-  /** Records the lane's short internal handoff after its Agent returns. */
-  complete(lane: ReviewLaneName, terminalText: string): void {
+  /** Records the lane's short internal handoff after its Agent returns, and returns the summary it stored. */
+  complete(lane: ReviewLaneName, terminalText: string): string {
     const summary = terminalText.trim() || "Review completed without an additional assessment."
     this.#assessments.set(lane, LaneAssessmentSchema.parse({ lane, summary }))
+    return summary
   }
 
   /** Returns every staged candidate without exposing mutable queue state. */

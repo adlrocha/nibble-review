@@ -650,15 +650,22 @@ test("gate answers publish through post_issue_comment without starting review la
     }
   })
   const base = options(github.client, workspace)
+  // Lanes kept from a timed-out review survive an answer: the head still has no verdict.
+  const laneCheckpointDirectory = path.join(workspace, "lanes")
+  fs.mkdirSync(laneCheckpointDirectory)
+  fs.writeFileSync(path.join(laneCheckpointDirectory, "intent-contract.json"), "kept")
 
   const result = await runReview(
     options(github.client, workspace, {
       actionMode: "live",
+      laneCheckpointDirectory,
+      laneCheckpointSecret: "provider-key",
       request: { ...base.request, eventName: "issue_comment", eventPath: eventFile }
     }),
     () => provider
   )
 
+  assert.deepEqual(fs.readdirSync(laneCheckpointDirectory), ["intent-contract.json"])
   assert.equal(result.status, "answered")
   assert.equal(result.gate.source, "agent")
   assert.deepEqual(

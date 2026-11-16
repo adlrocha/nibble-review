@@ -63,9 +63,14 @@ inputs:
     required: false
     default: "true"
   timeout-minutes:
-    description: Upper bound for each review attempt.
+    description: Upper bound for each review attempt. The job's own timeout should cover two attempts.
     required: false
-    default: "20"
+    default: "30"
+  reuse-lanes:
+    description: >-
+      Let the fallback attempt reuse the specialist lanes the failed attempt finished. They live in a temporary directory of this job only, deleted when the review step ends. Off when install-dependencies is on.
+    required: false
+    default: "true"
 
   land:
     description: >-
@@ -196,9 +201,20 @@ runs:
         API_KEY: ${{ inputs.api-key }}
         API_KEY_ENV: ${{ inputs.api-key-env }}
         TIMEOUT_MINUTES: ${{ inputs.timeout-minutes }}
+        REUSE_LANES: ${{ inputs.reuse-lanes == 'true' && inputs.install-dependencies != 'true' }}
       run: |
         export "$API_KEY_ENV=$API_KEY"
         unset API_KEY
+        # Finished lanes are handed from a failed attempt to the fallback only
+        # inside this step: a fresh directory nothing else in the job writes,
+        # removed on exit, never cached or shared with another run.
+        if [[ "$REUSE_LANES" == "true" ]]; then
+          NIBBLE_REVIEW_LANE_CACHE=$(mktemp -d "${RUNNER_TEMP}/nibble-review-lanes.XXXXXX")
+          export NIBBLE_REVIEW_LANE_CACHE
+          trap 'rm -rf "$NIBBLE_REVIEW_LANE_CACHE"' EXIT
+        else
+          unset NIBBLE_REVIEW_LANE_CACHE
+        fi
         bash "$GITHUB_ACTION_PATH/bin/review-with-fallback.sh"
 
     - name: Report land decision

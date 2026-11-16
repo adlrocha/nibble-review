@@ -58,6 +58,7 @@ test("a pre-publication failure retries once with the fallback model", t => {
 test("the runner gives up an unpublished review a minute before the attempt timeout", t => {
   assert.equal(runFallback(t, [0], { TIMEOUT_MINUTES: "20" }).deadline, "1140")
   assert.equal(runFallback(t, [0], { TIMEOUT_MINUTES: "1" }).deadline, "30")
+  assert.equal(runFallback(t, [0], { TIMEOUT_MINUTES: "" }).deadline, "1740")
 })
 
 test("other failures never retry, because something may already be published", t => {
@@ -231,7 +232,7 @@ test("the action fetches reviewed commits after checkout and before any reposito
   const install = action.indexOf("- name: Install repository dependencies")
   assert.ok(checkout >= 0 && fetch > checkout && install > fetch)
 
-  const step = action.slice(fetch, install)
+  const step = steps(action)["Fetch previously reviewed commits"]
   assert.match(step, /continue-on-error: true/u)
   assert.match(step, /bin\/latest-reviewed-commit\.sh/u)
   assert.match(step, /REVIEW_BOT_LOGIN: \$\{\{ steps\.app-token\.outputs\.app-slug/u)
@@ -373,4 +374,69 @@ test("the lookup's marker and shared logins match the reviewer's authorship rule
   const script = fs.readFileSync(latestScript, "utf8")
   assert.ok(script.includes(`marker="${REVIEW_MARKER}"`))
   assert.ok(script.includes(`shared_logins='${JSON.stringify([...SHARED_BOT_LOGINS])}'`))
+})
+
+test("each attempt gets 30 minutes by default and the example job covers two", () => {
+  assert.match(action, /\n  timeout-minutes:\n[\s\S]*?default: "30"/u)
+  for (const file of ["examples/nibble-review.yml", ".github/workflows/nibble-review.yml"]) {
+    assert.match(fs.readFileSync(path.join(root, file), "utf8"), /\n    timeout-minutes: 75\n/u, file)
+  }
+})
+
+/** Runs the Review pull request step's script with a fake fallback runner that reports the lane directory. */
+function runReviewStep(t, env) {
+  const block = steps(action)["Review pull request"]
+  const script = block
+    .slice(block.indexOf("run: |") + "run: |".length)
+    .split("\n")
+    .map(line => line.replace(/^ {8}/u, ""))
+    .join("\n")
+  const actionPath = fs.mkdtempSync(path.join(os.tmpdir(), "nibble-review-step-"))
+  t.after(() => fs.rmSync(actionPath, { recursive: true, force: true }))
+  fs.mkdirSync(path.join(actionPath, "bin"))
+  const report = path.join(actionPath, "report")
+  fs.writeFileSync(
+    path.join(actionPath, "bin", "review-with-fallback.sh"),
+    `echo "dir=\${NIBBLE_REVIEW_LANE_CACHE:-}" > "${report}"
+[[ -d "\${NIBBLE_REVIEW_LANE_CACHE:-/nonexistent}" ]] && echo exists >> "${report}"
+[[ -z "\${API_KEY:-}" ]] && echo key-unset >> "${report}"
+exit 0
+`
+  )
+  const result = spawnSync("bash", ["-euo", "pipefail", "-c", script], {
+    encoding: "utf8",
+    env: {
+      PATH: process.env.PATH,
+      GITHUB_ACTION_PATH: actionPath,
+      RUNNER_TEMP: actionPath,
+      API_KEY: "k",
+      API_KEY_ENV: "OPENCODE_API_KEY",
+      ...env
+    }
+  })
+  assert.equal(result.status, 0, result.stderr)
+  const lines = fs.readFileSync(report, "utf8").trim().split("\n")
+  const dir = lines[0].slice("dir=".length)
+  return { dir, existed: lines.includes("exists"), keyUnset: lines.includes("key-unset") }
+}
+
+test("finished lanes are reused only inside the review step and never cached", t => {
+  assert.match(action, /\n  reuse-lanes:\n[\s\S]*?default: "true"/u)
+  // No cross-run storage: nothing outside this job can hand the review a lane.
+  assert.doesNotMatch(action, /actions\/cache|upload-artifact|download-artifact/u)
+  const step = steps(action)["Review pull request"]
+  assert.match(
+    step,
+    /REUSE_LANES: \$\{\{ inputs\.reuse-lanes == 'true' && inputs\.install-dependencies != 'true' \}\}/u
+  )
+
+  const on = runReviewStep(t, { REUSE_LANES: "true" })
+  assert.match(on.dir, /nibble-review-lanes\.\w+$/u)
+  assert.equal(on.existed, true)
+  assert.equal(on.keyUnset, true)
+  assert.equal(fs.existsSync(on.dir), false, "the directory is removed when the step ends")
+
+  // Off is authoritative even when the workflow sets the local-run variable.
+  const off = runReviewStep(t, { REUSE_LANES: "false", NIBBLE_REVIEW_LANE_CACHE: "/tmp/elsewhere" })
+  assert.equal(off.dir, "")
 })

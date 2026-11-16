@@ -175,7 +175,8 @@ export async function main(argv = process.argv.slice(2), env = process.env): Pro
     reviewEmojis: env.REVIEW_EMOJIS !== "false",
     maximumConcurrency: options.concurrency,
     progress: line => process.stderr.write(`${line}\n`),
-    signal: deadline.signal
+    signal: deadline.signal,
+    ...laneCheckpointOptions(env)
   }).finally(() => {
     if (timer) {
       clearTimeout(timer)
@@ -208,6 +209,19 @@ export function reviewDeadlineSeconds(value: string | undefined): number | null 
     throw new Error("NIBBLE_REVIEW_DEADLINE_SECONDS must be a positive integer")
   }
   return seconds
+}
+
+/**
+ * Reads where lane checkpoints live and the provider key that signs them; the
+ * key is named by API_KEY_ENV, as in the action. Without both, every lane runs.
+ */
+export function laneCheckpointOptions(env: NodeJS.ProcessEnv): {
+  laneCheckpointDirectory?: string
+  laneCheckpointSecret?: string
+} {
+  const directory = env.NIBBLE_REVIEW_LANE_CACHE?.trim()
+  const secret = env[env.API_KEY_ENV?.trim() || "OPENCODE_API_KEY"]
+  return directory && secret ? { laneCheckpointDirectory: resolve(directory), laneCheckpointSecret: secret } : {}
 }
 
 /** Reserves exit code 2 for failures that happened before a publishable review existed. */
