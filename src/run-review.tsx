@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url"
 import { AmlRuntime, localWorkspace, ParallelError } from "@aml-jsx/sdk"
 
 import { createReviewContextEnvironment, ReviewContextProvider } from "./components/context/review-context.js"
+import { LaneCheckpoints } from "./lib/lane-checkpoints.js"
 import { quarantineProjectPiConfig } from "./lib/project-pi-config.js"
 import { readPiUsage, withPiUsage } from "./lib/pi-usage.js"
 import { createReviewProvider } from "./lib/review-provider.js"
@@ -27,6 +28,10 @@ export type ReviewRuntimeOptions = {
   maximumConcurrency: number
   progress?: (line: string) => unknown
   signal?: AbortSignal
+  /** Directory that keeps finished lanes between attempts; omitted runs every lane each time. */
+  laneCheckpointDirectory?: string
+  /** Secret that signs lane checkpoints; checkpoints stay off without it. */
+  laneCheckpointSecret?: string
 }
 
 const REVIEW_PROVIDER = "pi"
@@ -72,7 +77,11 @@ export async function runReview(
     request: options.request,
     actionMode: options.actionMode,
     model: options.model,
-    reviewEmojis: options.reviewEmojis !== false
+    reviewEmojis: options.reviewEmojis !== false,
+    checkpoints:
+      options.laneCheckpointDirectory && options.laneCheckpointSecret
+        ? new LaneCheckpoints(options.laneCheckpointDirectory, options.laneCheckpointSecret, options.progress)
+        : null
   })
   const attempts: ReviewAttempt[] = []
   const startedAt = new Date().toISOString()
@@ -117,7 +126,18 @@ export async function runReview(
       error: null
     })
     selected = environment.outcome.result()
+    // A posted review (or a gate verdict) settles this head, so the next review
+    // starts fresh. Dry runs, answers to questions and failed posts keep lanes.
+    if (options.actionMode === "live" && !selected.publicationError && selected.review.status !== "answered") {
+      environment.checkpoints?.clear()
+    }
   } catch (error) {
+    // Lanes are kept for a deadline or a lane failure. When every lane finished
+    // and a later phase failed on its own, their output may be the cause, so
+    // the fallback model reviews from scratch.
+    if (!signal.aborted && environment.checkpoints?.allFinished()) {
+      environment.checkpoints.clear()
+    }
     attempts.push({
       number: 1,
       provider: REVIEW_PROVIDER,

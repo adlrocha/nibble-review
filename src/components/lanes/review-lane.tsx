@@ -12,9 +12,30 @@ export type ReviewLaneProps = AML.PropsWithRequiredChildren<{
   readonly lane: ReviewLaneName
 }>
 
-/** Runs one focused specialist and hands its non-canonical assessment to audit. */
+/**
+ * Runs one focused specialist and hands its non-canonical assessment to audit.
+ *
+ * A lane that already finished for this head and base in an earlier attempt is
+ * restored instead of run again; a finished lane is checkpointed at once, so a
+ * later timeout elsewhere does not discard it.
+ */
 export const ReviewLane: AML.Component<ReviewLaneProps> = async ({ lane, children }) => {
-  const { github, queue } = useReviewContext()
+  const { github, queue, checkpoints } = useReviewContext()
+  const restored = checkpoints?.store.load(lane, checkpoints.scope)
+  if (checkpoints && restored) {
+    for (const finding of restored.findings) {
+      try {
+        queue.add(lane, finding)
+      } catch (error) {
+        // Usually a reply whose comment has since gone, which is moot.
+        checkpoints.store.note(
+          `lane checkpoint ${lane}: dropped a restored finding: ${error instanceof Error ? error.message : String(error)}`
+        )
+      }
+    }
+    queue.complete(lane, restored.summary)
+    return <Block>{restored.summary}</Block>
+  }
   const tools = createLaneReviewTools(queue, lane)
   // Tool adapters are a consumer concern, not request state. Each lane derives
   // the model-facing GitHub surface from the shared cached session it receives.
@@ -51,5 +72,12 @@ export const ReviewLane: AML.Component<ReviewLaneProps> = async ({ lane, childre
   )
 
   queue.complete(lane, assessment)
+  checkpoints?.store.save(lane, checkpoints.scope, {
+    summary: assessment,
+    findings: queue
+      .staged()
+      .filter(staged => staged.lane === lane)
+      .map(staged => staged.finding)
+  })
   return <Block>{assessment}</Block>
 }

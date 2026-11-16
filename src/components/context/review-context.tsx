@@ -1,6 +1,7 @@
 import { createContext, useContext, type AML } from "@aml-jsx/sdk"
 
 import type { PublishedReview, ReviewRequest, ReviewSnapshot } from "../../types/review.js"
+import { laneCheckpointScope, type LaneCheckpoints, type LaneCheckpointScope } from "../../lib/lane-checkpoints.js"
 import { ReviewQueue } from "../../lib/review-queue.js"
 import { ReviewGitHubActions, type GitHubActionMode } from "../../services/github/actions.js"
 import type { GitHubClient } from "../../services/github/client.js"
@@ -65,6 +66,8 @@ export type ReviewContextValue = Readonly<{
   outcome: ReviewOutcome
   snapshot: ReviewSnapshot
   model: string
+  /** Finished lanes kept for this head and base, or null when checkpoints are off. */
+  checkpoints: Readonly<{ store: LaneCheckpoints; scope: LaneCheckpointScope }> | null
 }>
 
 export const ReviewContext = createContext<ReviewContextValue>("NibbleReview")
@@ -75,6 +78,7 @@ export type ReviewContextEnvironment = Readonly<{
   outcome: ReviewOutcome
   model: string
   reviewEmojis: boolean
+  checkpoints: LaneCheckpoints | null
 }>
 
 export type ReviewContextEnvironmentOptions = {
@@ -83,6 +87,8 @@ export type ReviewContextEnvironmentOptions = {
   actionMode: GitHubActionMode
   model: string
   reviewEmojis: boolean
+  /** Where finished lanes are kept between attempts; omitted turns checkpoints off. */
+  checkpoints?: LaneCheckpoints | null
 }
 
 /**
@@ -105,7 +111,8 @@ export function createReviewContextEnvironment(options: ReviewContextEnvironment
     actions,
     outcome: new ReviewOutcome(),
     model: options.model,
-    reviewEmojis: options.reviewEmojis
+    reviewEmojis: options.reviewEmojis,
+    checkpoints: options.checkpoints ?? null
   }
 }
 
@@ -121,7 +128,7 @@ type ReviewContextProviderProps = AML.PropsWithRequiredChildren<{
 }>
 
 export const ReviewContextProvider: AML.Component<ReviewContextProviderProps> = async ({ environment, children }) => {
-  const { github, actions, outcome, model, reviewEmojis } = environment
+  const { github, actions, outcome, model, reviewEmojis, checkpoints } = environment
   const snapshot = await github.snapshot()
 
   // Reject a stale checkout before constructing any Agent-facing review state.
@@ -151,10 +158,17 @@ export const ReviewContextProvider: AML.Component<ReviewContextProviderProps> = 
     routing: new ReviewRouting(),
     snapshot,
     outcome,
-    model
+    model,
+    checkpoints: checkpointsFor(checkpoints, snapshot)
   }
 
   return <ReviewContext.Provider value={value}>{children}</ReviewContext.Provider>
+}
+
+/** Scopes checkpoints to the validated head and base, so no lane is reused across revisions. */
+function checkpointsFor(store: LaneCheckpoints | null, snapshot: ReviewSnapshot): ReviewContextValue["checkpoints"] {
+  const scope = laneCheckpointScope(snapshot.context)
+  return store && scope ? { store, scope } : null
 }
 
 /** Reads the single request-scoped dependency and phase-result context. */

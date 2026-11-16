@@ -63,9 +63,14 @@ inputs:
     required: false
     default: "true"
   timeout-minutes:
-    description: Upper bound for each review attempt.
+    description: Upper bound for each review attempt. The job's own timeout should cover two attempts.
     required: false
-    default: "20"
+    default: "30"
+  lane-cache:
+    description: >-
+      Keep specialist lanes that finished in an attempt that then failed or timed out, and reuse them for the same head and base in the fallback attempt and in later runs, until a review is published. Off when install-dependencies is on.
+    required: false
+    default: "true"
 
   land:
     description: >-
@@ -172,6 +177,37 @@ runs:
           bash "$GITHUB_ACTION_PATH/bin/fetch-reviewed-commits.sh" "$GITHUB_WORKSPACE" "$sha"
         fi
 
+    # Finished lanes survive a failed or timed-out attempt. The key names this
+    # PR head and reviewer build; each run saves under its own key and restores
+    # the newest one. Checkpoint files are signed with the provider key, so
+    # entries planted by other workflows are ignored. Off when repository
+    # install scripts run in this job, since they share its environment.
+    - name: Key lane checkpoints
+      id: lane-cache
+      if: steps.preflight.outputs.should_review == 'true' && inputs.lane-cache == 'true' && inputs.install-dependencies != 'true'
+      continue-on-error: true
+      shell: bash
+      env:
+        PR_NUMBER: ${{ inputs.pr-number }}
+      run: |
+        head=$(git -C "$GITHUB_WORKSPACE" rev-parse HEAD)
+        build=$(cd "$GITHUB_ACTION_PATH" && find src bin package-lock.json -type f -print0 | sort -z | xargs -0 sha256sum | sha256sum | cut -c1-16)
+        prefix="nibble-review-lanes-${PR_NUMBER}-${head}-${build}-"
+        {
+          echo "dir=${RUNNER_TEMP}/nibble-review-lanes"
+          echo "prefix=${prefix}"
+          echo "key=${prefix}${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+        } >> "$GITHUB_OUTPUT"
+
+    - name: Restore lane checkpoints
+      if: steps.lane-cache.outputs.key != ''
+      continue-on-error: true
+      uses: actions/cache/restore@v6
+      with:
+        path: ${{ steps.lane-cache.outputs.dir }}
+        key: ${{ steps.lane-cache.outputs.key }}
+        restore-keys: ${{ steps.lane-cache.outputs.prefix }}
+
     - name: Install repository dependencies
       if: steps.preflight.outputs.should_review == 'true' && inputs.install-dependencies == 'true'
       shell: bash
@@ -196,10 +232,19 @@ runs:
         API_KEY: ${{ inputs.api-key }}
         API_KEY_ENV: ${{ inputs.api-key-env }}
         TIMEOUT_MINUTES: ${{ inputs.timeout-minutes }}
+        NIBBLE_REVIEW_LANE_CACHE: ${{ steps.lane-cache.outputs.dir }}
       run: |
         export "$API_KEY_ENV=$API_KEY"
         unset API_KEY
         bash "$GITHUB_ACTION_PATH/bin/review-with-fallback.sh"
+
+    - name: Save lane checkpoints
+      if: always() && steps.lane-cache.outputs.key != ''
+      continue-on-error: true
+      uses: actions/cache/save@v6
+      with:
+        path: ${{ steps.lane-cache.outputs.dir }}
+        key: ${{ steps.lane-cache.outputs.key }}
 
     - name: Report land decision
       if: steps.preflight.outputs.should_review == 'true' && inputs.land == 'true'

@@ -58,6 +58,7 @@ test("a pre-publication failure retries once with the fallback model", t => {
 test("the runner gives up an unpublished review a minute before the attempt timeout", t => {
   assert.equal(runFallback(t, [0], { TIMEOUT_MINUTES: "20" }).deadline, "1140")
   assert.equal(runFallback(t, [0], { TIMEOUT_MINUTES: "1" }).deadline, "30")
+  assert.equal(runFallback(t, [0], { TIMEOUT_MINUTES: "" }).deadline, "1740")
 })
 
 test("other failures never retry, because something may already be published", t => {
@@ -231,7 +232,7 @@ test("the action fetches reviewed commits after checkout and before any reposito
   const install = action.indexOf("- name: Install repository dependencies")
   assert.ok(checkout >= 0 && fetch > checkout && install > fetch)
 
-  const step = action.slice(fetch, install)
+  const step = steps(action)["Fetch previously reviewed commits"]
   assert.match(step, /continue-on-error: true/u)
   assert.match(step, /bin\/latest-reviewed-commit\.sh/u)
   assert.match(step, /REVIEW_BOT_LOGIN: \$\{\{ steps\.app-token\.outputs\.app-slug/u)
@@ -373,4 +374,37 @@ test("the lookup's marker and shared logins match the reviewer's authorship rule
   const script = fs.readFileSync(latestScript, "utf8")
   assert.ok(script.includes(`marker="${REVIEW_MARKER}"`))
   assert.ok(script.includes(`shared_logins='${JSON.stringify([...SHARED_BOT_LOGINS])}'`))
+})
+
+test("each attempt gets 30 minutes by default and the example job covers two", () => {
+  assert.match(action, /\n  timeout-minutes:\n[\s\S]*?default: "30"/u)
+  for (const file of ["examples/nibble-review.yml", ".github/workflows/nibble-review.yml"]) {
+    assert.match(fs.readFileSync(path.join(root, file), "utf8"), /\n    timeout-minutes: 75\n/u, file)
+  }
+})
+
+test("lane checkpoints are restored before the review, saved after it, and off with install scripts", () => {
+  assert.match(action, /\n  lane-cache:\n[\s\S]*?default: "true"/u)
+  const byName = steps(action)
+  const order = Object.keys(byName)
+  const index = name => order.indexOf(name)
+  assert.ok(index("Check out pull request") < index("Key lane checkpoints"))
+  assert.ok(index("Key lane checkpoints") < index("Restore lane checkpoints"))
+  assert.ok(index("Restore lane checkpoints") < index("Install repository dependencies"))
+  assert.ok(index("Review pull request") < index("Save lane checkpoints"))
+
+  assert.match(
+    byName["Key lane checkpoints"],
+    /if: steps\.preflight\.outputs\.should_review == 'true' && inputs\.lane-cache == 'true' && inputs\.install-dependencies != 'true'/u
+  )
+  assert.match(byName["Restore lane checkpoints"], /if: steps\.lane-cache\.outputs\.key != ''/u)
+  assert.match(byName["Restore lane checkpoints"], /restore-keys: \$\{\{ steps\.lane-cache\.outputs\.prefix \}\}/u)
+  assert.match(byName["Save lane checkpoints"], /if: always\(\) && steps\.lane-cache\.outputs\.key != ''/u)
+  for (const name of ["Key lane checkpoints", "Restore lane checkpoints", "Save lane checkpoints"]) {
+    assert.match(byName[name], /continue-on-error: true/u, name)
+  }
+  for (const name of ["Key lane checkpoints", "Restore lane checkpoints", "Save lane checkpoints"]) {
+    assert.doesNotMatch(byName[name], /GH_TOKEN|github-token|app-token|api-key/u, name)
+  }
+  assert.match(byName["Review pull request"], /NIBBLE_REVIEW_LANE_CACHE: \$\{\{ steps\.lane-cache\.outputs\.dir \}\}/u)
 })
