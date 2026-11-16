@@ -383,28 +383,59 @@ test("each attempt gets 30 minutes by default and the example job covers two", (
   }
 })
 
-test("lane checkpoints are restored before the review, saved after it, and off with install scripts", () => {
-  assert.match(action, /\n  lane-cache:\n[\s\S]*?default: "true"/u)
-  const byName = steps(action)
-  const order = Object.keys(byName)
-  const index = name => order.indexOf(name)
-  assert.ok(index("Check out pull request") < index("Key lane checkpoints"))
-  assert.ok(index("Key lane checkpoints") < index("Restore lane checkpoints"))
-  assert.ok(index("Restore lane checkpoints") < index("Install repository dependencies"))
-  assert.ok(index("Review pull request") < index("Save lane checkpoints"))
-
-  assert.match(
-    byName["Key lane checkpoints"],
-    /if: steps\.preflight\.outputs\.should_review == 'true' && inputs\.lane-cache == 'true' && inputs\.install-dependencies != 'true'/u
+/** Runs the Review pull request step's script with a fake fallback runner that reports the lane directory. */
+function runReviewStep(t, env) {
+  const block = steps(action)["Review pull request"]
+  const script = block
+    .slice(block.indexOf("run: |") + "run: |".length)
+    .split("\n")
+    .map(line => line.replace(/^ {8}/u, ""))
+    .join("\n")
+  const actionPath = fs.mkdtempSync(path.join(os.tmpdir(), "nibble-review-step-"))
+  t.after(() => fs.rmSync(actionPath, { recursive: true, force: true }))
+  fs.mkdirSync(path.join(actionPath, "bin"))
+  const report = path.join(actionPath, "report")
+  fs.writeFileSync(
+    path.join(actionPath, "bin", "review-with-fallback.sh"),
+    `echo "dir=\${NIBBLE_REVIEW_LANE_CACHE:-}" > "${report}"
+[[ -d "\${NIBBLE_REVIEW_LANE_CACHE:-/nonexistent}" ]] && echo exists >> "${report}"
+[[ -z "\${API_KEY:-}" ]] && echo key-unset >> "${report}"
+exit 0
+`
   )
-  assert.match(byName["Restore lane checkpoints"], /if: steps\.lane-cache\.outputs\.key != ''/u)
-  assert.match(byName["Restore lane checkpoints"], /restore-keys: \$\{\{ steps\.lane-cache\.outputs\.prefix \}\}/u)
-  assert.match(byName["Save lane checkpoints"], /if: always\(\) && steps\.lane-cache\.outputs\.key != ''/u)
-  for (const name of ["Key lane checkpoints", "Restore lane checkpoints", "Save lane checkpoints"]) {
-    assert.match(byName[name], /continue-on-error: true/u, name)
-  }
-  for (const name of ["Key lane checkpoints", "Restore lane checkpoints", "Save lane checkpoints"]) {
-    assert.doesNotMatch(byName[name], /GH_TOKEN|github-token|app-token|api-key/u, name)
-  }
-  assert.match(byName["Review pull request"], /NIBBLE_REVIEW_LANE_CACHE: \$\{\{ steps\.lane-cache\.outputs\.dir \}\}/u)
+  const result = spawnSync("bash", ["-euo", "pipefail", "-c", script], {
+    encoding: "utf8",
+    env: {
+      PATH: process.env.PATH,
+      GITHUB_ACTION_PATH: actionPath,
+      RUNNER_TEMP: actionPath,
+      API_KEY: "k",
+      API_KEY_ENV: "OPENCODE_API_KEY",
+      ...env
+    }
+  })
+  assert.equal(result.status, 0, result.stderr)
+  const lines = fs.readFileSync(report, "utf8").trim().split("\n")
+  const dir = lines[0].slice("dir=".length)
+  return { dir, existed: lines.includes("exists"), keyUnset: lines.includes("key-unset") }
+}
+
+test("finished lanes are reused only inside the review step and never cached", t => {
+  assert.match(action, /\n  reuse-lanes:\n[\s\S]*?default: "true"/u)
+  // No cross-run storage: nothing outside this job can hand the review a lane.
+  assert.doesNotMatch(action, /actions\/cache|upload-artifact|download-artifact/u)
+  const step = steps(action)["Review pull request"]
+  assert.match(
+    step,
+    /REUSE_LANES: \$\{\{ inputs\.reuse-lanes == 'true' && inputs\.install-dependencies != 'true' \}\}/u
+  )
+
+  const on = runReviewStep(t, { REUSE_LANES: "true" })
+  assert.match(on.dir, /nibble-review-lanes\.\w+$/u)
+  assert.equal(on.existed, true)
+  assert.equal(on.keyUnset, true)
+  assert.equal(fs.existsSync(on.dir), false, "the directory is removed when the step ends")
+
+  const off = runReviewStep(t, { REUSE_LANES: "false" })
+  assert.equal(off.dir, "")
 })

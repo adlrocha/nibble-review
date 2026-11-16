@@ -120,17 +120,18 @@ test("every lane counts as finished once it is saved or restored", t => {
   assert.equal(lines.at(-1), "↺ lane checkpoint x: dropped a restored finding: gone")
 })
 
-test("publishing clears lanes behind a marker, and a new lane drops the marker", t => {
+test("publishing clears every lane", t => {
   const dir = directory(t)
   const store = new LaneCheckpoints(dir, secret)
-  // Even with nothing saved, the marker is written so it supersedes older saved copies.
-  store.clear()
-  assert.deepEqual(fs.readdirSync(dir), ["published.json"])
+  // Nothing saved yet: clearing is a no-op, not an error.
+  const lines = []
+  new LaneCheckpoints(dir, secret, line => lines.push(line)).clear()
+  assert.deepEqual(lines, [])
 
   store.save("intent-contract", scope, { summary: "a", findings: [] })
   store.save("code-path-bug-hunter", scope, { summary: "b", findings: [finding] })
   store.clear()
-  assert.deepEqual(fs.readdirSync(dir), ["published.json"])
+  assert.deepEqual(fs.readdirSync(dir), [])
   assert.equal(store.load("intent-contract", scope), null)
 
   store.save("intent-contract", scope, { summary: "again", findings: [] })
@@ -185,7 +186,7 @@ test("clearing leaves files the store did not write", t => {
   fs.writeFileSync(path.join(dir, "intent-contract.json.123.tmp"), "partial")
   fs.writeFileSync(path.join(dir, "notes.txt"), "mine")
   store.clear()
-  assert.deepEqual(fs.readdirSync(dir).sort(), ["notes.txt", "published.json"])
+  assert.deepEqual(fs.readdirSync(dir), ["notes.txt"])
 })
 
 test("the CLI turns checkpoints on only with a directory and the provider key", () => {

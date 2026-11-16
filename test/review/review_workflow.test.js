@@ -1700,7 +1700,7 @@ test("a failed attempt keeps its finished lanes, and the next attempt runs only 
     laneNames
   )
   // A published review drops every lane, so the next review of this head starts fresh.
-  assert.deepEqual(fs.readdirSync(laneCheckpointDirectory), ["published.json"])
+  assert.deepEqual(fs.readdirSync(laneCheckpointDirectory), [])
 })
 
 /** Reads a lane checkpoint written by a real run, so planted files carry the run's scope. */
@@ -1772,7 +1772,7 @@ test("a later phase that fails after every lane finished drops the lanes", async
     runReview(reviewOptions(t, fakeGitHub().client, { laneCheckpointDirectory, laneCheckpointSecret }), () => provider),
     { name: "ReviewUnavailableError" }
   )
-  assert.deepEqual(fs.readdirSync(laneCheckpointDirectory), ["published.json"])
+  assert.deepEqual(fs.readdirSync(laneCheckpointDirectory), [])
 })
 
 test("lanes are kept when the posted review fails", async t => {

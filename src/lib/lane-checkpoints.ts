@@ -19,7 +19,6 @@ export type LaneCheckpoint = Readonly<{ summary: string; findings: ReviewFinding
 
 const CHECKPOINT_VERSION = 1
 const SHA = z.string().regex(/^[0-9a-f]{40}$/u)
-const PUBLISHED_MARKER = "published.json"
 /** A lane's checkpoint, or a temporary file left by an interrupted write. */
 const OWN_FILE = new RegExp(`^(?:${REVIEW_LANE_NAMES.join("|")})\\.json(?:\\.\\d+\\.tmp)?$`, "u")
 
@@ -45,14 +44,13 @@ const SignedFileSchema = z
 
 /**
  * Finished specialist lanes kept on disk until a review is published, so an
- * attempt that times out hands its finished lanes to the next attempt (the
- * fallback model, or a later run that restores the directory) instead of
- * discarding them.
+ * attempt that times out hands its finished lanes to the fallback attempt
+ * instead of discarding them. The action keeps them in a temporary directory
+ * of the review step only; nothing carries them to another run.
  *
- * Checkpoint files are signed with a key derived from a secret only the review
- * job holds (the model provider key). Anything else that can write the
- * directory or the Actions cache, such as a pull request's own CI, cannot forge
- * a lane, so restored findings carry the same authority as live ones.
+ * Checkpoint files are also signed with a key derived from a secret only the
+ * review holds (the model provider key), so a file it did not write is never
+ * taken for a lane's work.
  *
  * A checkpoint only counts for the exact head and base it was written for. A
  * file that is missing, unsigned, malformed or for another revision is a miss,
@@ -123,7 +121,6 @@ export class LaneCheckpoints {
     const text = JSON.stringify(parsed.data)
     try {
       mkdirSync(this.#directory, { recursive: true, mode: 0o700 })
-      rmSync(join(this.#directory, PUBLISHED_MARKER), { force: true })
       const path = this.#path(lane)
       const temporary = `${path}.${process.pid}.tmp`
       writeFileSync(temporary, JSON.stringify({ checkpoint: text, mac: this.#mac(text) }), { mode: 0o600 })
@@ -144,24 +141,21 @@ export class LaneCheckpoints {
   }
 
   /**
-   * Drops every stored lane and leaves a marker file. The marker is never read:
-   * it keeps the directory non-empty so the action's cache save still stores
-   * it, and that newest, lane-free entry is what the next run restores instead
-   * of an older one that still held lanes. Only this class's own files are
-   * removed, so a shared directory keeps everything else.
+   * Drops every stored lane, so the next review of this head starts fresh.
+   * Only this class's own files are removed, so a shared directory keeps
+   * everything else.
    */
   clear(): void {
     try {
-      mkdirSync(this.#directory, { recursive: true, mode: 0o700 })
       for (const entry of readdirSync(this.#directory)) {
         if (OWN_FILE.test(entry)) {
           rmSync(join(this.#directory, entry), { force: true })
         }
       }
-      writeFileSync(join(this.#directory, PUBLISHED_MARKER), JSON.stringify({ version: CHECKPOINT_VERSION }), {
-        mode: 0o600
-      })
-    } catch {
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+        return
+      }
       this.#progress("↺ lane checkpoints could not be cleared")
     }
   }

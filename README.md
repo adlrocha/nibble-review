@@ -140,7 +140,7 @@ Models investigate and write. They do not decide which commit was reviewed, whet
 | `emojis` | `true` | Prefix inline comments with severity emojis. |
 | `land` | `false` | Report whether each head could merge without a person. See [Land](#land). |
 | `timeout-minutes` | `30` | Upper bound for each review attempt. |
-| `lane-cache` | `true` | Keep lanes that finished in a failed or timed-out attempt and reuse them for the same head. See below. |
+| `reuse-lanes` | `true` | Let the fallback attempt reuse the lanes the failed attempt finished, within the same job. See below. |
 
 Use another provider by changing two inputs:
 
@@ -157,11 +157,7 @@ If you change `command`, change the mention in your workflow's `if:` filter to m
 
 A review that has published nothing a minute before `timeout-minutes` gives up and hands over to the fallback model, so a slow primary model doesn't fail the check. Publication failures, and timeouts after publishing has started, never trigger the fallback, because their GitHub mutation outcome may be ambiguous. The job's own `timeout-minutes` should cover two attempts (the example uses 75). **Upgrading from v1.1.x:** the attempt default rose from 20 to 30 minutes, so raise a job timeout of 45 to 75, or set `timeout-minutes: 20` on the action to keep the old budget. Each run writes a job summary with the model, Agent turns, token usage, estimated cost (from pi's model catalog, not a reconciled bill), comment counts, and publication status.
 
-**Lane checkpoints.** One slow lane used to throw away an attempt's other five finished lanes, and the fallback then ran all six again. Each lane is now saved the moment it finishes, keyed by the PR head and base, so the fallback attempt runs only the lanes that did not finish. The saved lanes are also kept with `actions/cache` for later runs on the same head, and dropped once a review is published, so a new review after you reply to findings starts fresh. A new push, a moved base or a new reviewer version never reuses them. If every lane finished and a later step failed on its own, the lanes are dropped too, so the fallback model reviews from scratch rather than inheriting output that may have caused the failure.
-
-GitHub scopes caches by the triggering ref. A push-triggered run saves to the pull request's scope, which **Re-run failed jobs** can read but an `@nibble-review` comment run cannot; a comment run saves to the default branch, which every later run can read. So after a timed-out push run, re-run the failed job rather than commenting. Because a pull request's scope is read first, re-running an old failed push job after a comment run already published can reuse that job's lanes for the same head.
-
-Checkpoint files are signed with a key derived from the model provider key. Other workflows can write to the same cache, including a pull request's own CI, but without that key they cannot forge a lane, so a planted entry is ignored. Checkpoints are off when `install-dependencies` is on, because install scripts run in this job.
+**Lane reuse.** One slow lane used to throw away an attempt's other five finished lanes, and the fallback then ran all six again. Each lane is now saved the moment it finishes, so the fallback attempt runs only the lanes that did not finish. The saved lanes live in a fresh temporary directory of the review step, deleted when it ends: they are never cached or shared with another run, so a re-run reviews from scratch. If every lane finished and a later step failed on its own, the lanes are dropped, so the fallback model reviews from scratch rather than inheriting output that may have caused the failure. Reuse is off when `install-dependencies` is on, because install scripts run in this job.
 
 ## Land
 
@@ -237,7 +233,7 @@ Use a GitHub App for `app-client-id`/`app-private-key`: pushes made with the def
 - Every Agent runs with read-only filesystem access and no shell or network.
 - Every published body is scrubbed of secret-looking environment values and carries a hidden `<!-- nibble-review -->` marker, so a shared `github-actions[bot]` login is never confused with other workflows' comments.
 - Every model phase sees the same cached GitHub snapshot and filtered diff. A failed lane, audit, finalization, synthesis, or model run leaves nothing to publish.
-- Restored lane checkpoints must carry a valid signature from a key derived from the provider key, pass the same finding schema and anchor checks as a live lane, and match the exact head and base. They are off in a job that runs repository install scripts.
+- Lanes reused by the fallback attempt come only from the same review step, in a temporary directory that is removed when it ends and never cached. They are signed with a key derived from the provider key, pass the same finding schema and anchor checks as a live lane, and must match the exact head, base and PR contract. Reuse is off in a job that runs repository install scripts.
 - The CLI is dry-run by default; live GitHub mutations require `--publish`. Publication re-checks the PR head and never replays an ambiguous failed mutation.
 
 Pull request text, comments, diffs, repository files, and linked GitHub content are untrusted evidence. They cannot grant tools or change the review contract. Dependency installation is opt-in because package scripts run with the job's credentials available.
