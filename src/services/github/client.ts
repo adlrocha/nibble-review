@@ -338,7 +338,8 @@ function normalizePullRequest(data: PullRequestSummary): PullRequestSummary {
     headRefName: data.headRefName || data.head?.ref || null,
     baseRefOid: data.baseRefOid || data.base?.sha || null,
     headRefOid: data.headRefOid || data.head?.sha || null,
-    isDraft: data.isDraft ?? data.draft ?? false
+    isDraft: data.isDraft ?? data.draft ?? false,
+    state: data.state?.toLowerCase() ?? null
   }
 }
 
@@ -950,15 +951,19 @@ query($owner: String!, $name: String!, $number: Int!, $cursor: String) {
         ref: sha,
         per_page: 100
       })
-      const seen = new Set<string>()
-      const current = statuses.filter(status => !seen.has(status.context) && Boolean(seen.add(status.context)))
+      const current = new Map<string, (typeof statuses)[number]>()
+      for (const status of statuses) {
+        if (!current.has(status.context)) {
+          current.set(status.context, status)
+        }
+      }
       return [
         ...runs.map(run => ({
           name: run.name,
           state: checkRunState(run.status, run.conclusion),
           source: "run" as const
         })),
-        ...current.map(status => ({
+        ...[...current.values()].map(status => ({
           name: status.context,
           state: commitStatusState(status.state),
           source: "status" as const

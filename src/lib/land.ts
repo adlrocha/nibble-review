@@ -3,7 +3,7 @@ import { parse as parseToml } from "smol-toml"
 import { z } from "zod"
 
 import type { CommitCheck, PullRequestFile } from "../services/github/client.js"
-import { REVIEW_MARKER } from "./review-authorship.js"
+import { GITHUB_ACTIONS_BOT_LOGIN, REVIEW_MARKER } from "./review-authorship.js"
 import { isIgnoredLockfile } from "./review-diff.js"
 import { inlineSeverityPrefix, type ReviewVerdictLabel } from "./review-queue.js"
 
@@ -34,7 +34,13 @@ export type LandProfile = (typeof LAND_PROFILES)[number]
  * Every workflow counts, not only the reviewer's: a workflow in the pull
  * request runs with a token that can post as the reviewer.
  */
-const GATE_PATHS: readonly string[] = [".nibble/sdlc.toml", ".github/workflows/**", ".github/actions/**"]
+const GATE_PATHS: readonly string[] = [
+  ".nibble/sdlc.toml",
+  ".github/workflows/**",
+  ".github/actions/**",
+  "**/action.yml",
+  "**/action.yaml"
+]
 
 /** Paths where merging acts on CI, secrets, stored data, or the rules agents follow. */
 const STANDARD_PATHS: readonly string[] = [
@@ -117,9 +123,7 @@ const CRITICAL_PATHS: readonly string[] = [
   "**/helm/**",
   "**/k8s/**",
   "**/Makefile",
-  "**/install.sh",
-  "**/action.yml",
-  "**/action.yaml"
+  "**/install.sh"
 ]
 
 /** The paths each profile sends to a person, before the repository's own `always_human`. */
@@ -150,6 +154,8 @@ const LandSettingsSchema = z
     main_is_staging: z.boolean().default(false),
     /** Logins whose pull requests may merge unattended. Empty means any human author. */
     authors: z.array(nonEmpty).default([]),
+    /** The account reviews post as, for callers outside the action. */
+    reviewer: nonEmpty.default(GITHUB_ACTIONS_BOT_LOGIN),
     /** Checks that must pass on the head. Unattended merging needs at least one. */
     required_checks: z.array(nonEmpty).default([]),
     /** Optional hard size limit. Without it, size is only a signal for the judge. */
@@ -212,6 +218,10 @@ export type LandInput = {
   files: PullRequestFile[]
   threads: LandThread[]
   config: SdlcConfig
+  /** True unless the head branch lives in this repository. */
+  isFork: boolean
+  /** The mention that asks this repository's reviewer for a review. */
+  command: string
   /** Present only for a merge attempt. */
   merge?: MergeFacts | undefined
 }
@@ -315,14 +325,23 @@ export function parseWhereToLook(body: string): string | null {
 // By extension, never by folder: code under `docs/` or `dist/` still runs.
 const NOT_COUNTED = /\.(md|mdx|txt|snap)$/iu
 
-const TEST_PATH = /(^|\/)(tests?|__tests__)\/|\.(test|spec)\.[^/]+$|_test\.[^/]+$|(^|\/)(test_[^/]+|tests\.[^/]+)$/iu
+const TEST_PATH =
+  /(^|\/)(tests?|__tests__)\/|\.(test|spec)\.[^/]+$|_(test|spec)\.[^/]+$|(^|\/)(test_[^/]+|tests\.[^/]+)$/iu
 
 // Case-sensitive, or names like `latest.ts` would count as tests.
 const TEST_CLASS_FILE = /[a-z0-9]Tests?\.[^/]+$/u
 
-/** True for test files across common layouts, inside or outside a test directory. */
-function isTestFile(path: string): boolean {
+// RSpec's directory, whose name other languages also use for code.
+const SPEC_DIRECTORY = /(^|\/)spec\//iu
+
+/** True for files that are tests by every common layout's rules, so nothing that runs in production. */
+function isOnlyTest(path: string): boolean {
   return TEST_PATH.test(path) || TEST_CLASS_FILE.test(path)
+}
+
+/** True for anything that may be a test, for spotting tests that got weaker. */
+function isTestFile(path: string): boolean {
+  return isOnlyTest(path) || SPEC_DIRECTORY.test(path)
 }
 
 /** Formats a path as a code span, so a file name can only ever render as text. */
@@ -340,7 +359,7 @@ function countedLines(files: PullRequestFile[]): number {
   return files
     .filter(
       file =>
-        ![NOT_COUNTED.test(file.filename), isTestFile(file.filename), isIgnoredLockfile(file.filename)].some(Boolean)
+        ![NOT_COUNTED.test(file.filename), isOnlyTest(file.filename), isIgnoredLockfile(file.filename)].some(Boolean)
     )
     .reduce((sum, file) => sum + file.changes, 0)
 }
@@ -394,8 +413,13 @@ function shownPaths(paths: string[]): string {
   return paths.length > 5 ? `${shown} and ${paths.length - 5} more` : shown
 }
 
+/** How to get a full review rather than a fast-track. */
+function askAgain(command: string): string {
+  return `comment ${codeSpan(`${command} re-review`)}`
+}
+
 /** What the review still needs before this exact commit counts as approved. */
-function reviewBlockers({ headSha, records, threads }: LandInput): string[] {
+function reviewBlockers({ command, headSha, records, threads }: LandInput): string[] {
   const blockers: string[] = []
   // A full review outranks a fast-track of the same commit: the fast-track path
   // says LGTM for any head it has seen, including one a full review blocked.
@@ -417,7 +441,7 @@ function reviewBlockers({ headSha, records, threads }: LandInput): string[] {
     lastFull.verdict !== "lgtm" &&
     (lastFull.severe || threads.some(thread => thread.isOwn && isSevere(thread.firstBody)))
   ) {
-    blockers.push("a high or critical finding needs a full review to clear it: comment `@nibble-review re-review`")
+    blockers.push(`a high or critical finding needs a full review to clear it: ${askAgain(command)}`)
   }
   const unresolved = threads.filter(thread => !thread.is_resolved).length
   if (unresolved > 0) {
@@ -427,7 +451,7 @@ function reviewBlockers({ headSha, records, threads }: LandInput): string[] {
 }
 
 /** What the pull request still needs before GitHub could merge it safely. */
-function mergeBlockers(merge: MergeFacts, config: SdlcConfig): string[] {
+function mergeBlockers(merge: MergeFacts, config: SdlcConfig, command: string): string[] {
   const blockers: string[] = []
   if (!merge.isOpen) {
     blockers.push("the pull request is not open")
@@ -446,7 +470,7 @@ function mergeBlockers(merge: MergeFacts, config: SdlcConfig): string[] {
     )
   }
   if (merge.retargeted) {
-    blockers.push("the base branch changed after the last full review: comment `@nibble-review re-review`")
+    blockers.push(`the base branch changed after the last full review: ${askAgain(command)}`)
   }
   for (const name of config.land.required_checks) {
     // Only a check run counts as having run: any push token can post a status of the same name.
@@ -475,7 +499,7 @@ function mergeBlockers(merge: MergeFacts, config: SdlcConfig): string[] {
  */
 export function evaluateLand(input: LandInput): LandDecision {
   const { config, files, records, threads } = input
-  const blockers = [...reviewBlockers(input), ...(input.merge ? mergeBlockers(input.merge, config) : [])]
+  const blockers = [...reviewBlockers(input), ...(input.merge ? mergeBlockers(input.merge, config, input.command) : [])]
 
   const asks: string[] = []
   if (input.authorIsBot) {
@@ -484,6 +508,9 @@ export function evaluateLand(input: LandInput): LandDecision {
     asks.push("its author is unknown")
   } else if (config.land.authors.length > 0 && !config.land.authors.includes(input.author)) {
     asks.push(`opened by ${codeSpan(input.author)}, who is not in \`authors\``)
+  }
+  if (input.isFork) {
+    asks.push("opened from a fork")
   }
   if (config.land.required_checks.length === 0) {
     asks.push("no `required_checks` are configured, so nothing proves the change works")

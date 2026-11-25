@@ -8,4 +8,15 @@ required_checks = ["test", "sandbox"]
 # true when main deploys to dev and a release deploys to production
 main_is_staging = false
 # The reviewer decides what merges everywhere, so its trust boundaries stay with a person.
-always_human = ["src/lib/land.ts", "src/cli/land.ts", "src/instructions/**", "src/services/review-preflight.ts"]
+always_human = [
+  "src/lib/land.ts",
+  "src/lib/review-queue.ts",
+  "src/lib/review-authorship.ts",
+  "src/lib/review-gate.ts",
+  "src/cli/land.ts",
+  "src/components/phases",
+  "src/instructions",
+  "src/services/github/client.ts",
+  "src/services/review-preflight.ts",
+  "src/services/review-evidence.ts"
+]

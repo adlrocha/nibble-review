@@ -195,6 +195,7 @@ profile = "standard"          # "side-project", "standard" or "critical" (the de
 required_checks = ["test"]    # needed for anything to merge unattended
 authors = ["adlrocha"]        # whose pull requests may merge unattended; empty means any human
 always_human = ["src/auth/**"]
+reviewer = "nibble-review[bot]" # the account reviews post as, if not github-actions[bot]
 main_is_staging = false       # true when merging only reaches a staging environment
 # max_lines = 400             # a hard size limit; unset by default
 

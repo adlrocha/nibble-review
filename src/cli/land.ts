@@ -20,7 +20,7 @@ import {
   type VerdictRecord,
   type WhereToLook
 } from "../lib/land.js"
-import { GITHUB_ACTIONS_BOT_LOGIN, reviewAuthorship, type ReviewAuthorship } from "../lib/review-authorship.js"
+import { reviewAuthorship, type ReviewAuthorship } from "../lib/review-authorship.js"
 import {
   createGitHubClient,
   MAX_PULL_REQUEST_FILES,
@@ -31,7 +31,7 @@ import {
   type PullRequestSummary,
   type ReviewThread
 } from "../services/github/client.js"
-import { DEFAULT_REVIEW_BOT_LOGIN } from "../services/review-evidence.js"
+import { DEFAULT_REVIEW_BOT_LOGIN, REVIEW_COMMAND } from "../services/review-evidence.js"
 import { ReviewPreflight } from "../services/review-preflight.js"
 
 /** One of this reviewer's top-level bodies, and whether it was posted as a review or a comment. */
@@ -99,6 +99,9 @@ function latestWhereToLook(bodies: string[]): WhereToLook | null {
   return null
 }
 
+/** The pull request land works on, and how its reviewer is asked for a review. */
+export type LandTarget = { repository: string; prNumber: number; command?: string | undefined }
+
 /** Everything the fixed rules read about one pull-request head. */
 type LandFacts = {
   defaultBranch: string
@@ -117,18 +120,17 @@ type LandFacts = {
 async function gatherFacts(
   github: GitHubClient,
   prNumber: number,
-  botLogin: string,
-  configOverride: string | null = null
+  source: { botLogin?: string | undefined; configText?: string | null | undefined }
 ): Promise<LandFacts | null> {
   const defaultBranch = await github.getDefaultBranch()
   // The default branch, never the PR head, so a pull request cannot relax its own rules.
-  const config = parseSdlcConfig(configOverride ?? (await github.getRepositoryFile(LAND_CONFIG_PATH, defaultBranch)))
+  const config = parseSdlcConfig(source.configText ?? (await github.getRepositoryFile(LAND_CONFIG_PATH, defaultBranch)))
   if (config.land.mode === "off") {
     return null
   }
 
   const pullRequest = await github.getPullRequest(prNumber)
-  const headSha = pullRequest.headRefOid || pullRequest.head?.sha
+  const headSha = pullRequest.headRefOid
   if (!headSha) {
     throw new Error(`pull request #${prNumber} has no head commit`)
   }
@@ -146,7 +148,7 @@ async function gatherFacts(
   if (files.length >= MAX_PULL_REQUEST_FILES || (pullRequest.changed_files ?? files.length) !== files.length) {
     throw new Error(`GitHub listed only ${files.length} of the changed files, so no decision was made`)
   }
-  const authorship = reviewAuthorship(botLogin)
+  const authorship = reviewAuthorship(source.botLogin ?? config.land.reviewer)
   // The risk comment is land's own output, so it never counts as review evidence.
   const own = ownBodies(authorship, comments, reviews).filter(item => !item.body.startsWith(RISK_COMMENT_MARKER))
   return {
@@ -164,10 +166,10 @@ async function gatherFacts(
 }
 
 /** Applies the fixed rules to gathered facts. */
-function decide(facts: LandFacts, merge?: MergeFacts): LandDecision {
+function decide(facts: LandFacts, target: LandTarget, merge?: MergeFacts): LandDecision {
   return evaluateLand({
     headSha: facts.headSha,
-    author: facts.pullRequest.user?.login ?? facts.pullRequest.author?.login ?? "",
+    author: facts.pullRequest.author?.login ?? "",
     authorIsBot: facts.pullRequest.user?.type === "Bot",
     records: facts.own.map(trustedRecord).filter(record => record !== null),
     files: facts.files,
@@ -179,13 +181,10 @@ function decide(facts: LandFacts, merge?: MergeFacts): LandDecision {
       isOwn: facts.authorship.isOwn(thread.comments[0])
     })),
     config: facts.config,
+    isFork: facts.pullRequest.head?.repo?.full_name !== target.repository,
+    command: target.command ?? REVIEW_COMMAND,
     merge
   })
-}
-
-/** The branch a pull request merges into. */
-function baseOf(pullRequest: PullRequestSummary): string | null {
-  return pullRequest.base?.ref ?? pullRequest.baseRefName ?? null
 }
 
 /** People whose latest decisive review asks for changes. */
@@ -209,7 +208,7 @@ function changesRequestedBy(reviews: PullRequestReview[]): string[] {
 /** Reads what only matters when someone is about to merge. */
 async function gatherMergeFacts(github: GitHubClient, prNumber: number, facts: LandFacts): Promise<MergeFacts> {
   const { pullRequest, headSha } = facts
-  const base = baseOf(pullRequest)
+  const base = pullRequest.baseRefName
   if (!base) {
     throw new Error("the pull request has no base branch")
   }
@@ -223,8 +222,8 @@ async function gatherMergeFacts(github: GitHubClient, prNumber: number, facts: L
     facts.files.flatMap(file => [file.filename, ...(file.previous_filename ? [file.previous_filename] : [])])
   )
   return {
-    isOpen: pullRequest.state === "open" || pullRequest.state === "OPEN",
-    isDraft: (pullRequest.draft ?? pullRequest.isDraft) === true,
+    isOpen: pullRequest.state === "open",
+    isDraft: pullRequest.isDraft === true,
     mergeable: pullRequest.mergeable ?? null,
     checks,
     changesRequestedBy: changesRequestedBy(facts.reviews),
@@ -248,16 +247,17 @@ async function gatherMergeFacts(github: GitHubClient, prNumber: number, facts: L
  */
 export async function runLand(
   github: GitHubClient,
-  prNumber: number,
+  target: LandTarget,
   botLogin: string,
   publish: boolean
 ): Promise<string> {
-  const facts = await gatherFacts(github, prNumber, botLogin)
+  const { prNumber } = target
+  const facts = await gatherFacts(github, prNumber, { botLogin })
   if (!facts) {
     return "land is off"
   }
   const { authorship, comments, config, headSha, own } = facts
-  const decision = decide(facts)
+  const decision = decide(facts, target)
   const whereToLook = latestWhereToLook(own.map(item => item.body))
   const body = renderRiskComment({ headSha, decision, config, whereToLook })
   if (!publish) {
@@ -285,6 +285,39 @@ export async function runLand(
 /** Version of the bundle's shape, so a reader can reject one it doesn't know. */
 export const LAND_BUNDLE_VERSION = 1
 
+/** The decision and evidence a local merge tool acts on. */
+export type LandBundle = {
+  version: typeof LAND_BUNDLE_VERSION
+  mode: SdlcConfig["land"]["mode"]
+  policy: SdlcConfig["land"]
+  pullRequest: {
+    repository: string
+    number: number
+    title: string
+    body: string
+    author: string
+    base: string
+    headSha: string
+  }
+  decision: LandDecision
+  files: Pick<PullRequestFile, "filename" | "status" | "additions" | "deletions">[]
+  /** Null when GitHub refuses a very large diff. */
+  diff: string | null
+  riskMap: string | null
+  issues: { number: number; title: string; body: string }[]
+  reviews: { author: string; state: string; at: string; body: string }[]
+  threads: {
+    path: string | null
+    resolved: boolean
+    codeChanged: boolean
+    comments: { author: string; body: string }[]
+  }[]
+  comments: { author: string; association: string; at: string; body: string }[]
+}
+
+/** What the bundle is when land is off. */
+export type LandBundleOff = { version: typeof LAND_BUNDLE_VERSION; mode: "off" }
+
 /**
  * Builds everything a local merge tool needs: the fixed-rule decision with
  * merge facts, and the evidence its judge reads. It writes nothing.
@@ -294,14 +327,13 @@ export const LAND_BUNDLE_VERSION = 1
  */
 export async function landBundle(
   github: GitHubClient,
-  repository: string,
-  prNumber: number,
-  botLogin: string,
-  configText: string | null = null
-) {
-  const facts = await gatherFacts(github, prNumber, botLogin, configText)
+  target: LandTarget,
+  source: { botLogin?: string | undefined; configText?: string | null | undefined } = {}
+): Promise<LandBundle | LandBundleOff> {
+  const { prNumber, repository } = target
+  const facts = await gatherFacts(github, prNumber, source)
   if (!facts) {
-    return { version: LAND_BUNDLE_VERSION, mode: "off" as const }
+    return { version: LAND_BUNDLE_VERSION, mode: "off" }
   }
   const { comments, config, files, headSha, pullRequest, reviews, threads } = facts
   const [merge, riskMap, issues, diff] = await Promise.all([
@@ -314,12 +346,9 @@ export async function landBundle(
   // Files, threads and the diff are read by number, so a push in between would
   // pair this commit with another one's contents.
   const after = await github.getPullRequest(prNumber)
-  if ((after.headRefOid || after.head?.sha) !== headSha || baseOf(after) !== baseOf(pullRequest)) {
+  if (after.headRefOid !== headSha || after.baseRefName !== pullRequest.baseRefName) {
     throw new Error("the pull request changed while it was being read; try again")
   }
-  const decision = decide(facts, merge)
-  const isFork = pullRequest.head?.repo?.full_name !== repository
-  const asks = isFork ? [...decision.asks, "opened from a fork"] : decision.asks
   return {
     version: LAND_BUNDLE_VERSION,
     mode: config.land.mode,
@@ -329,15 +358,11 @@ export async function landBundle(
       number: prNumber,
       title: pullRequest.title ?? "",
       body: pullRequest.body ?? "",
-      author: pullRequest.user?.login ?? "",
-      base: baseOf(pullRequest) ?? "",
+      author: pullRequest.author?.login ?? "",
+      base: pullRequest.baseRefName ?? "",
       headSha
     },
-    decision: {
-      ...decision,
-      asks,
-      outcome: decision.outcome === "ready" && asks.length > 0 ? ("ask" as const) : decision.outcome
-    },
+    decision: decide(facts, target, merge),
     files: files.map(({ filename, status, additions, deletions }) => ({ filename, status, additions, deletions })),
     diff,
     riskMap,
@@ -387,6 +412,8 @@ export async function main(argv = process.argv.slice(2), env = process.env): Pro
   const json = argv.some(argument => argument === "--json" || argument.startsWith("--json="))
   try {
     const { github, repository, prNumber } = readTarget(env)
+    const command = env.REVIEW_COMMAND?.trim() || undefined
+    const target = { repository, prNumber, command }
     const { values } = parseArgs({
       args: argv,
       options: { publish: { type: "boolean" }, json: { type: "boolean" }, config: { type: "string" } },
@@ -394,13 +421,12 @@ export async function main(argv = process.argv.slice(2), env = process.env): Pro
     })
     const publish = values.publish === true
     if (json) {
-      // Local callers have no App token to name the reviewer, so they mean the action's default identity.
-      const botLogin = env.REVIEW_BOT_LOGIN || GITHUB_ACTIONS_BOT_LOGIN
       if (publish) {
         throw new Error("--json never publishes")
       }
       const configText = values.config === undefined ? null : readFileSync(values.config, "utf8")
-      const bundle = await landBundle(github, repository, prNumber, botLogin, configText)
+      // Local callers have no App token to name the reviewer, so the policy does.
+      const bundle = await landBundle(github, target, { botLogin: env.REVIEW_BOT_LOGIN || undefined, configText })
       process.stdout.write(`${JSON.stringify(bundle)}\n`)
       return
     }
@@ -413,14 +439,14 @@ export async function main(argv = process.argv.slice(2), env = process.env): Pro
         github,
         repository,
         prNumber,
-        command: env.REVIEW_COMMAND?.trim() || undefined
+        command
       }).evaluate(env.TRIGGER_COMMENT_ID ? Number(env.TRIGGER_COMMENT_ID) : null)
       if (!guard.shouldReview) {
         process.stdout.write(`land skipped: ${guard.reason}\n`)
         return
       }
     }
-    const result = await runLand(github, prNumber, env.REVIEW_BOT_LOGIN || DEFAULT_REVIEW_BOT_LOGIN, publish)
+    const result = await runLand(github, target, env.REVIEW_BOT_LOGIN || DEFAULT_REVIEW_BOT_LOGIN, publish)
     process.stdout.write(`${result}\n`)
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
