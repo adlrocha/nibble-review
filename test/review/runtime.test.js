@@ -918,7 +918,12 @@ test("a repository that opted into land records the fast-tracked LGTM for the ex
     () => provider
   )
 
-  assert.deepEqual(parseVerdictMarker(result.body), { sha: history.head, verdict: "lgtm", kind: "delta" })
+  assert.deepEqual(parseVerdictMarker(result.body), {
+    sha: history.head,
+    verdict: "lgtm",
+    kind: "delta",
+    severe: false
+  })
 })
 
 test("a model cannot forge a verdict record through a gate answer", async t => {

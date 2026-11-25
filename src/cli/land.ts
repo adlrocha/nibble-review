@@ -23,6 +23,7 @@ import {
 import { GITHUB_ACTIONS_BOT_LOGIN, reviewAuthorship, type ReviewAuthorship } from "../lib/review-authorship.js"
 import {
   createGitHubClient,
+  MAX_PULL_REQUEST_FILES,
   type GitHubClient,
   type IssueComment,
   type PullRequestFile,
@@ -34,25 +35,39 @@ import { DEFAULT_REVIEW_BOT_LOGIN } from "../services/review-evidence.js"
 import { ReviewPreflight } from "../services/review-preflight.js"
 
 /** One of this reviewer's top-level bodies, and whether it was posted as a review or a comment. */
-type OwnBody = { body: string; source: "review" | "comment" }
+type OwnBody = {
+  body: string
+  source: "review" | "comment"
+  at: string
+  /** The commit GitHub says a review was submitted for. */
+  commit: string | null
+  /** True when the text changed after it was posted, which the reviewer never does. */
+  edited: boolean
+}
 
 /** Keeps this reviewer's top-level bodies, oldest first, from a pull request's comments and reviews. */
 function ownBodies(authorship: ReviewAuthorship, comments: IssueComment[], reviews: PullRequestReview[]): OwnBody[] {
-  const dated = [
+  const dated: OwnBody[] = [
     ...comments
       .filter(item => authorship.isOwn(item))
-      .map(item => ({ at: item.created_at, body: String(item.body ?? ""), source: "comment" as const })),
+      .map(item => ({
+        at: item.created_at ?? "",
+        body: String(item.body ?? ""),
+        source: "comment" as const,
+        commit: null,
+        edited: Boolean(item.updated_at) && item.updated_at !== item.created_at
+      })),
     ...reviews
       .filter(item => authorship.isOwn(item))
       .map(item => ({
-        at: item.submitted_at ?? item.submittedAt,
+        at: item.submitted_at ?? item.submittedAt ?? "",
         body: String(item.body ?? ""),
-        source: "review" as const
+        source: "review" as const,
+        commit: item.commit_id ?? item.commitId ?? null,
+        edited: false
       }))
   ]
-  return dated
-    .sort((left, right) => String(left.at ?? "").localeCompare(String(right.at ?? "")))
-    .map(({ body, source }) => ({ body, source }))
+  return dated.sort((left, right) => left.at.localeCompare(right.at))
 }
 
 /**
@@ -62,10 +77,15 @@ function ownBodies(authorship: ReviewAuthorship, comments: IssueComment[], revie
  * comments. Answers are comments that carry no record, so a full record in a
  * comment, or a delta record in a review, did not come from publication.
  */
-function trustedRecord({ body, source }: OwnBody): VerdictRecord | null {
+function trustedRecord({ body, source, commit, edited }: OwnBody): VerdictRecord | null {
   const record = parseVerdictMarker(body)
-  const expected = record?.kind === "full" ? "review" : "comment"
-  return record && source === expected ? record : null
+  if (!record || edited) {
+    return null
+  }
+  if (record.kind === "delta") {
+    return source === "comment" ? record : null
+  }
+  return source === "review" && (commit === null || commit === record.sha) ? record : null
 }
 
 /** Finds the newest "where to look" list, remembering which commit it was written for. */
@@ -81,6 +101,7 @@ function latestWhereToLook(bodies: string[]): WhereToLook | null {
 
 /** Everything the fixed rules read about one pull-request head. */
 type LandFacts = {
+  defaultBranch: string
   pullRequest: PullRequestSummary
   headSha: string
   config: SdlcConfig
@@ -121,10 +142,25 @@ async function gatherFacts(
   if (!threads.available) {
     throw new Error("review threads are unavailable, so no decision was made")
   }
+  // GitHub stops listing at a cap, and a rule can't protect a path it never saw.
+  if (files.length >= MAX_PULL_REQUEST_FILES || (pullRequest.changed_files ?? files.length) !== files.length) {
+    throw new Error(`GitHub listed only ${files.length} of the changed files, so no decision was made`)
+  }
   const authorship = reviewAuthorship(botLogin)
   // The risk comment is land's own output, so it never counts as review evidence.
   const own = ownBodies(authorship, comments, reviews).filter(item => !item.body.startsWith(RISK_COMMENT_MARKER))
-  return { pullRequest, headSha, config, comments, reviews, files, threads: threads.threads, authorship, own }
+  return {
+    defaultBranch,
+    pullRequest,
+    headSha,
+    config,
+    comments,
+    reviews,
+    files,
+    threads: threads.threads,
+    authorship,
+    own
+  }
 }
 
 /** Applies the fixed rules to gathered facts. */
@@ -147,6 +183,11 @@ function decide(facts: LandFacts, merge?: MergeFacts): LandDecision {
   })
 }
 
+/** The branch a pull request merges into. */
+function baseOf(pullRequest: PullRequestSummary): string | null {
+  return pullRequest.base?.ref ?? pullRequest.baseRefName ?? null
+}
+
 /** People whose latest decisive review asks for changes. */
 function changesRequestedBy(reviews: PullRequestReview[]): string[] {
   const latest = new Map<string, string>()
@@ -166,13 +207,18 @@ function changesRequestedBy(reviews: PullRequestReview[]): string[] {
 }
 
 /** Reads what only matters when someone is about to merge. */
-async function gatherMergeFacts(github: GitHubClient, facts: LandFacts): Promise<MergeFacts> {
+async function gatherMergeFacts(github: GitHubClient, prNumber: number, facts: LandFacts): Promise<MergeFacts> {
   const { pullRequest, headSha } = facts
-  const base = pullRequest.base?.ref ?? pullRequest.baseRefName
+  const base = baseOf(pullRequest)
   if (!base) {
     throw new Error("the pull request has no base branch")
   }
-  const [checks, drift] = await Promise.all([github.listCommitChecks(headSha), github.getBaseDrift(base, headSha)])
+  const [checks, drift, timeline] = await Promise.all([
+    github.listCommitChecks(headSha),
+    github.getBaseDrift(base, headSha),
+    github.listPullRequestTimeline(prNumber)
+  ])
+  const reviewedAt = facts.own.filter(item => trustedRecord(item)?.kind === "full").at(-1)?.at ?? ""
   const changed = new Set(
     facts.files.flatMap(file => [file.filename, ...(file.previous_filename ? [file.previous_filename] : [])])
   )
@@ -182,6 +228,11 @@ async function gatherMergeFacts(github: GitHubClient, facts: LandFacts): Promise
     mergeable: pullRequest.mergeable ?? null,
     checks,
     changesRequestedBy: changesRequestedBy(facts.reviews),
+    otherBase: base === facts.defaultBranch ? null : base,
+    // A verdict judged the diff against the old base, so a new base needs a new one.
+    retargeted: timeline.some(
+      event => event.event === "base_ref_changed" && String(event.created_at ?? "") > reviewedAt
+    ),
     // A partial list can't prove there is no overlap, so it counts as one.
     overlappingFiles: drift.truncated
       ? [...changed]
@@ -254,12 +305,18 @@ export async function landBundle(
   }
   const { comments, config, files, headSha, pullRequest, reviews, threads } = facts
   const [merge, riskMap, issues, diff] = await Promise.all([
-    gatherMergeFacts(github, facts),
-    github.getDefaultBranch().then(branch => github.getRepositoryFile(RISK_MAP_PATH, branch)),
+    gatherMergeFacts(github, prNumber, facts),
+    github.getRepositoryFile(RISK_MAP_PATH, facts.defaultBranch),
     github.listPullRequestClosingIssues(prNumber),
     // GitHub refuses very large diffs. The reader then has nothing to judge, so it asks.
     github.getPullRequestDiff(prNumber).catch(() => null)
   ])
+  // Files, threads and the diff are read by number, so a push in between would
+  // pair this commit with another one's contents.
+  const after = await github.getPullRequest(prNumber)
+  if ((after.headRefOid || after.head?.sha) !== headSha || baseOf(after) !== baseOf(pullRequest)) {
+    throw new Error("the pull request changed while it was being read; try again")
+  }
   const decision = decide(facts, merge)
   const isFork = pullRequest.head?.repo?.full_name !== repository
   const asks = isFork ? [...decision.asks, "opened from a fork"] : decision.asks
@@ -273,7 +330,7 @@ export async function landBundle(
       title: pullRequest.title ?? "",
       body: pullRequest.body ?? "",
       author: pullRequest.user?.login ?? "",
-      base: pullRequest.base?.ref ?? pullRequest.baseRefName ?? "",
+      base: baseOf(pullRequest) ?? "",
       headSha
     },
     decision: {
@@ -327,7 +384,7 @@ function readTarget(env: NodeJS.ProcessEnv): { github: GitHubClient; repository:
  */
 export async function main(argv = process.argv.slice(2), env = process.env): Promise<void> {
   // Decided before parsing, so a mistyped option still fails the way its caller expects.
-  const json = argv.includes("--json")
+  const json = argv.some(argument => argument === "--json" || argument.startsWith("--json="))
   try {
     const { github, repository, prNumber } = readTarget(env)
     const { values } = parseArgs({

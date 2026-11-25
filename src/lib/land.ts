@@ -2,7 +2,7 @@ import { minimatch } from "minimatch"
 import { parse as parseToml } from "smol-toml"
 import { z } from "zod"
 
-import type { PullRequestFile } from "../services/github/client.js"
+import type { CommitCheck, PullRequestFile } from "../services/github/client.js"
 import { REVIEW_MARKER } from "./review-authorship.js"
 import { isIgnoredLockfile } from "./review-diff.js"
 import { inlineSeverityPrefix, type ReviewVerdictLabel } from "./review-queue.js"
@@ -28,29 +28,42 @@ export const RISK_MAP_PATH = ".nibble/risk.md"
 export const LAND_PROFILES = ["side-project", "standard", "critical"] as const
 export type LandProfile = (typeof LAND_PROFILES)[number]
 
-/** Paths that decide what merges. No profile or setting can drop these. */
-const GATE_PATHS: readonly string[] = [
-  ".nibble/sdlc.toml",
-  ".github/workflows/nibble-review.yml",
-  ".github/workflows/nibble-review.yaml"
-]
+/**
+ * Paths that decide what merges. No profile or setting can drop these.
+ *
+ * Every workflow counts, not only the reviewer's: a workflow in the pull
+ * request runs with a token that can post as the reviewer.
+ */
+const GATE_PATHS: readonly string[] = [".nibble/sdlc.toml", ".github/workflows/**", ".github/actions/**"]
 
 /** Paths where merging acts on CI, secrets, stored data, or the rules agents follow. */
 const STANDARD_PATHS: readonly string[] = [
   ".github/**",
+  ".gitlab-ci.yml",
+  ".circleci/**",
+  "**/Jenkinsfile",
   ".nibble/**",
   "**/migrations/**",
   "**/db/migrate/**",
   "**/db/migration/**",
   "**/drizzle/**/*.sql",
-  "**/schema.prisma",
-  "**/AGENTS.md",
-  "**/CLAUDE.md",
+  "**/alembic/versions/**",
+  "**/db/schema.rb",
+  "**/*.prisma",
+  "**/AGENTS*.md",
+  "**/CLAUDE*.md",
+  "**/GEMINI*.md",
   "**/.agents/**",
   "**/.claude/**",
   "**/.pi/**",
+  "**/.codex/**",
+  "**/.cursor/**",
+  "**/.cursorrules",
   "**/.mcp.json",
   "**/.husky/**",
+  "**/.githooks/**",
+  "**/lefthook.y*ml",
+  "**/.pre-commit-config.y*ml",
   "**/.env*",
   "**/CODEOWNERS",
   "**/.gitmodules",
@@ -67,7 +80,12 @@ const CRITICAL_PATHS: readonly string[] = [
   "**/Cargo.lock",
   "**/go.mod",
   "**/go.sum",
+  "**/go.work",
+  "**/deno.json*",
+  "**/flake.nix",
+  "**/flake.lock",
   "**/requirements*.txt",
+  "**/requirements/*.txt",
   "**/pyproject.toml",
   "**/poetry.lock",
   "**/uv.lock",
@@ -82,6 +100,7 @@ const CRITICAL_PATHS: readonly string[] = [
   "**/pom.xml",
   "**/build.gradle",
   "**/build.gradle.kts",
+  "**/settings.gradle*",
   "**/mix.exs",
   "**/mix.lock",
   "**/.npmrc",
@@ -90,9 +109,12 @@ const CRITICAL_PATHS: readonly string[] = [
   "**/build.rs",
   "**/Dockerfile",
   "**/Dockerfile.*",
+  "**/Containerfile*",
   "**/docker-compose*.y*ml",
   "**/compose*.y*ml",
   "**/*.tf",
+  "**/*.tfvars",
+  "**/helm/**",
   "**/k8s/**",
   "**/Makefile",
   "**/install.sh",
@@ -109,14 +131,22 @@ export const PROFILE_PATHS: Readonly<Record<LandProfile, readonly string[]>> = {
 
 // Dot directories and any letter case match too, so `.config/package.json` or
 // EF Core's `Migrations/` can't slip past a pattern.
-const GLOB_OPTIONS = { dot: true, nocase: true } as const
+// `!` and `#` are literal, so no pattern can quietly turn into an exclusion or a comment.
+const GLOB_OPTIONS = { dot: true, nocase: true, nonegate: true, nocomment: true } as const
 
 const nonEmpty = z.string().trim().min(1)
+
+/** A path pattern, rooted at the repository whichever way it was written. */
+const pathPattern = nonEmpty
+  .refine(pattern => !pattern.startsWith("!"), "always_human can't exclude paths")
+  .transform(pattern => pattern.replace(/^(\.?\/)+/u, "").replace(/\/+$/u, ""))
+  .refine(pattern => pattern !== "", "always_human needs a path inside the repository")
 
 const LandSettingsSchema = z
   .object({
     mode: z.enum(["off", "shadow", "enforce"]).default("shadow"),
-    profile: z.enum(LAND_PROFILES).default("standard"),
+    // The strictest, so a file written before profiles existed keeps its protection.
+    profile: z.enum(LAND_PROFILES).default("critical"),
     main_is_staging: z.boolean().default(false),
     /** Logins whose pull requests may merge unattended. Empty means any human author. */
     authors: z.array(nonEmpty).default([]),
@@ -126,7 +156,7 @@ const LandSettingsSchema = z
     max_lines: z.number().int().positive().optional(),
     /** No longer read: rounds alone say nothing. Accepted so older files keep parsing. */
     max_review_rounds: z.number().int().positive().optional(),
-    always_human: z.array(nonEmpty).default([]),
+    always_human: z.array(pathPattern).default([]),
     /** Named situations, in plain language, that the judge must send to a person. */
     ask_when: z.record(z.string(), nonEmpty).default({})
   })
@@ -144,6 +174,8 @@ export type VerdictRecord = {
   sha: string
   verdict: LandVerdict
   kind: LandReviewKind
+  /** True when the review raised a high or critical finding, so deleting its comment hides nothing. */
+  severe: boolean
 }
 
 export type LandThread = {
@@ -155,18 +187,19 @@ export type LandThread = {
   isOwn: boolean
 }
 
-/** CI state of one named check on the head commit. */
-export type LandCheck = { name: string; state: "success" | "pending" | "failure" }
-
 /** Facts that only exist when someone is about to merge, so CI's own report leaves them out. */
 export type MergeFacts = {
   isOpen: boolean
   isDraft: boolean
   /** Null while GitHub is still computing it. */
   mergeable: boolean | null
-  checks: LandCheck[]
+  checks: CommitCheck[]
   /** People whose latest review requests changes. */
   changesRequestedBy: string[]
+  /** Set when the pull request doesn't target the branch its policy describes. */
+  otherBase: string | null
+  /** True when the base branch was changed after the last full review. */
+  retargeted: boolean
   /** Files that changed on both the base branch and this pull request since they diverged. */
   overlappingFiles: string[]
 }
@@ -217,12 +250,13 @@ export function parseSdlcConfig(text: string | null): SdlcConfig {
 }
 
 const VERDICT_RECORD_SOURCE =
-  "<!-- nibble-review:verdict sha=([0-9a-f]{40}) verdict=(lgtm|request-changes|block) kind=(full|delta) -->"
+  "<!-- nibble-review:verdict sha=([0-9a-f]{40}) verdict=(lgtm|request-changes|block) kind=(full|delta)( severe)? -->"
 const FINAL_VERDICT_RECORD = new RegExp(`${VERDICT_RECORD_SOURCE}$`, "u")
 
 /** Renders the application-owned record land trusts, for the very end of a published body. */
 export function verdictMarker(record: VerdictRecord): string {
-  return `<!-- nibble-review:verdict sha=${record.sha} verdict=${record.verdict} kind=${record.kind} -->`
+  const severe = record.severe ? " severe" : ""
+  return `<!-- nibble-review:verdict sha=${record.sha} verdict=${record.verdict} kind=${record.kind}${severe} -->`
 }
 
 /** Machine-readable name of each verdict the application can render. */
@@ -259,7 +293,12 @@ export function parseVerdictMarker(body: string): VerdictRecord | null {
   if (!match) {
     return null
   }
-  return { sha: match[1] as string, verdict: match[2] as LandVerdict, kind: match[3] as LandReviewKind }
+  return {
+    sha: match[1] as string,
+    verdict: match[2] as LandVerdict,
+    kind: match[3] as LandReviewKind,
+    severe: match[4] !== undefined
+  }
 }
 
 /** Extracts the list under `## Where to look`, or null when the body has none. */
@@ -308,7 +347,9 @@ function countedLines(files: PullRequestFile[]): number {
 
 /** Lists the changed paths, old names included, that this repository sends to a person. */
 function alwaysHumanHits(files: PullRequestFile[], config: SdlcConfig): string[] {
-  const patterns = [...PROFILE_PATHS[config.land.profile], ...config.land.always_human]
+  // A folder written without a wildcard means everything in it.
+  const own = config.land.always_human.flatMap(pattern => [pattern, `${pattern}/**`])
+  const patterns = [...PROFILE_PATHS[config.land.profile], ...own]
   const paths = files.flatMap(file => [file.filename, ...(file.previous_filename ? [file.previous_filename] : [])])
   return [...new Set(paths.filter(path => patterns.some(pattern => minimatch(path, pattern, GLOB_OPTIONS))))].sort()
 }
@@ -372,8 +413,11 @@ function reviewBlockers({ headSha, records, threads }: LandInput): string[] {
     // A PR-level blocker leaves no thread to resolve, and a fast-track of a
     // later commit can't clear it. Request-changes findings do leave threads.
     blockers.push("the last full review blocked and no full review has cleared it")
-  } else if (lastFull.verdict !== "lgtm" && threads.some(thread => thread.isOwn && isSevere(thread.firstBody))) {
-    blockers.push("a high or critical finding needs a full review to clear it: ask the reviewer for a full re-review")
+  } else if (
+    lastFull.verdict !== "lgtm" &&
+    (lastFull.severe || threads.some(thread => thread.isOwn && isSevere(thread.firstBody)))
+  ) {
+    blockers.push("a high or critical finding needs a full review to clear it: comment `@nibble-review re-review`")
   }
   const unresolved = threads.filter(thread => !thread.is_resolved).length
   if (unresolved > 0) {
@@ -401,16 +445,22 @@ function mergeBlockers(merge: MergeFacts, config: SdlcConfig): string[] {
       `the base branch changed the same files, so update this branch: ${shownPaths(merge.overlappingFiles)}`
     )
   }
+  if (merge.retargeted) {
+    blockers.push("the base branch changed after the last full review: comment `@nibble-review re-review`")
+  }
   for (const name of config.land.required_checks) {
-    const states = merge.checks.filter(check => check.name === name).map(check => check.state)
-    if (states.length === 0) {
+    // Only a check run counts as having run: any push token can post a status of the same name.
+    const named = merge.checks.filter(check => check.name === name)
+    const bad = named.find(check => check.state !== "success")
+    if (!named.some(check => check.source === "run")) {
       blockers.push(`required check has not run: ${codeSpan(name)}`)
-    } else if (states.some(state => state !== "success")) {
-      blockers.push(`required check is ${states.find(state => state !== "success")}: ${codeSpan(name)}`)
+    } else if (bad) {
+      blockers.push(`required check is ${bad.state}: ${codeSpan(name)}`)
     }
   }
   const others = merge.checks.filter(
-    check => check.state !== "success" && !config.land.required_checks.includes(check.name)
+    check =>
+      (check.state === "pending" || check.state === "failure") && !config.land.required_checks.includes(check.name)
   )
   blockers.push(...others.map(check => `check is ${check.state}: ${codeSpan(check.name)}`))
   blockers.push(...merge.changesRequestedBy.map(login => `${codeSpan(login)} requested changes`))
@@ -430,6 +480,8 @@ export function evaluateLand(input: LandInput): LandDecision {
   const asks: string[] = []
   if (input.authorIsBot) {
     asks.push("opened by a bot or App")
+  } else if (input.author === "") {
+    asks.push("its author is unknown")
   } else if (config.land.authors.length > 0 && !config.land.authors.includes(input.author)) {
     asks.push(`opened by ${codeSpan(input.author)}, who is not in \`authors\``)
   }
@@ -439,6 +491,9 @@ export function evaluateLand(input: LandInput): LandDecision {
   const hits = alwaysHumanHits(files, config)
   if (hits.length > 0) {
     asks.push(`always-human paths: ${shownPaths(hits)}`)
+  }
+  if (input.merge?.otherBase) {
+    asks.push(`it targets ${codeSpan(input.merge.otherBase)}, and the policy only describes the default branch`)
   }
   const lines = countedLines(files)
   if (config.land.max_lines !== undefined && lines > config.land.max_lines) {

@@ -22,7 +22,7 @@ Every change lands through this loop, agent-authored changes included:
 
 1. One branch per change. Implement with tests; `npm run lint`, `npm run format:check`, and `npm test` pass locally before pushing.
 2. Open the PR ready for review — drafts skip the review entirely.
-3. Iterate with this repository's own nibble-review workflow (it dogfoods `@main`) until it LGTMs the **current head** and the `review` check is green. On a ⚠️ or ⛔ verdict, read every finding and resolve each one by fixing it or replying with evidence why it does not apply; never silently ignore one. Re-reviews trigger only on a push or an explicit `@nibble-review` comment — a reply alone never re-runs the reviewer. After a reply-only resolution, post `@nibble-review` to request the re-review, and wait for it before concluding.
+3. Iterate with this repository's own nibble-review workflow (it dogfoods `@main`) until it LGTMs the **current head** and the `review` check is green. On a ⚠️ or ⛔ verdict, read every finding and resolve each one by fixing it or replying with evidence why it does not apply; never silently ignore one. Re-reviews trigger only on a push or an explicit `@nibble-review` comment — a reply alone never re-runs the reviewer. After a reply-only resolution, post `@nibble-review re-review` to request the re-review, and wait for it before concluding.
 4. Hand off with `nibble land pr <number>` and do what it says. It merges what `.nibble/sdlc.toml` allows and otherwise tells you what is left or to call the user. Do not merge any other way, enable auto-merge, or push to `main`.
 
 ## Before yielding

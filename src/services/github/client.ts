@@ -179,6 +179,7 @@ export type PullRequestSummary = {
   isDraft?: boolean
   draft?: boolean
   mergeable?: boolean | null
+  changed_files?: number
   reviewDecision?: string | null
   state?: string | null
   updated_at?: string | null
@@ -233,7 +234,9 @@ export type CommitStatus = {
 /** The combined state of one check run or commit status on a commit. */
 export type CommitCheck = {
   name: string
-  state: "success" | "pending" | "failure"
+  state: "success" | "skipped" | "pending" | "failure"
+  /** A check run belongs to a GitHub App; any push token can post a commit status. */
+  source: "run" | "status"
 }
 
 /** How far a base branch moved since a head forked from it. */
@@ -289,8 +292,24 @@ export type GitHubClient = {
 /** GitHub lists at most this many files in a comparison. */
 const MAX_COMPARED_FILES = 300
 
-/** Conclusions GitHub itself accepts for a required check. */
-const PASSING_CONCLUSIONS: ReadonlySet<string> = new Set(["success", "neutral", "skipped"])
+/** GitHub lists at most this many of a pull request's files. */
+export const MAX_PULL_REQUEST_FILES = 3000
+
+/** The state of a check run. Skipped and neutral runs proved nothing, though GitHub lets them pass. */
+function checkRunState(status: string, conclusion: string | null): CommitCheck["state"] {
+  if (status !== "completed") {
+    return "pending"
+  }
+  if (conclusion === "success") {
+    return "success"
+  }
+  return conclusion === "skipped" || conclusion === "neutral" ? "skipped" : "failure"
+}
+
+/** The state of a commit status. */
+function commitStatusState(state: string): CommitCheck["state"] {
+  return state === "success" || state === "pending" ? state : "failure"
+}
 
 /**
  * Rejects a literal issue read that names a pull request. Missing resources
@@ -443,6 +462,7 @@ type GraphQLThreadNode = {
       url?: string | null
       author?: {
         login?: string | null
+        __typename?: string | null
       } | null
     }>
   }
@@ -463,6 +483,17 @@ type GraphQLReviewThreadsResponse = {
 }
 
 /**
+ * The login REST uses for a GraphQL actor.
+ *
+ * GraphQL names an App's bot without the `[bot]` suffix every REST response
+ * carries, and authorship compares logins, so one spelling has to win.
+ */
+function restLogin(author: { login?: string | null; __typename?: string | null } | null | undefined): string | null {
+  const login = author?.login || null
+  return login !== null && author?.__typename === "Bot" && !login.endsWith("[bot]") ? `${login}[bot]` : login
+}
+
+/**
  * Normalizes GraphQL review-thread nodes into the REST-like shape used by queue
  * validation and action-item discovery.
  */
@@ -471,7 +502,7 @@ function normalizeReviewThread(node: GraphQLThreadNode): ReviewThread {
     id: comment.databaseId || null,
     node_id: comment.id || null,
     user: {
-      login: comment.author?.login || null
+      login: restLogin(comment.author)
     },
     body: comment.body || "",
     path: comment.path || node.path || null,
@@ -753,6 +784,7 @@ query($owner: String!, $name: String!, $number: Int!, $cursor: String) {
               url
               author {
                 login
+                __typename
               }
             }
           }
@@ -923,19 +955,13 @@ query($owner: String!, $name: String!, $number: Int!, $cursor: String) {
       return [
         ...runs.map(run => ({
           name: run.name,
-          state:
-            run.status !== "completed"
-              ? ("pending" as const)
-              : PASSING_CONCLUSIONS.has(run.conclusion ?? "")
-                ? ("success" as const)
-                : ("failure" as const)
+          state: checkRunState(run.status, run.conclusion),
+          source: "run" as const
         })),
         ...current.map(status => ({
           name: status.context,
-          state:
-            status.state === "success" || status.state === "pending"
-              ? (status.state as "success" | "pending")
-              : ("failure" as const)
+          state: commitStatusState(status.state),
+          source: "status" as const
         }))
       ]
     },

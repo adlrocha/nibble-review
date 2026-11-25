@@ -184,14 +184,14 @@ A head has one of three outcomes:
 
 Review rounds and size decide nothing on their own. Weakened tests (a removed or renamed-away test file, removed assertions, a skip or focus marker) and severe findings closed by a reply alone are listed for the judge to weigh.
 
-Merging is left to a local tool. `node dist/cli/land.js --json` prints the decision as JSON, adding what only matters at merge time: the pull request is open, not a draft, and free of conflicts; every check on the head passed, including all of `required_checks`; nobody's review asks for changes; and the base branch hasn't changed the same files. It also carries the evidence a judge reads: the diff, linked issues, reviews, threads, comments, and the repository's `.nibble/risk.md`. It writes nothing. [`nibble land`](https://github.com/adlrocha/nibble/blob/main/docs/land.md) uses it to judge and merge.
+Merging is left to a local tool. `node dist/cli/land.js --json` prints the decision as JSON, adding what only matters at merge time: the pull request is open, not a draft, and free of conflicts; no check on the head failed or is still running; every one of `required_checks` is a check run that succeeded, not one that was skipped; nobody's review asks for changes; it targets the default branch and did so when it was reviewed; and the base branch hasn't changed the same files. It also carries the evidence a judge reads: the diff, linked issues, reviews, threads, comments, and the repository's `.nibble/risk.md`. It writes nothing. [`nibble land`](https://github.com/adlrocha/nibble/blob/main/docs/land.md) uses it to judge and merge.
 
 Settings live in the `[land]` table of `.nibble/sdlc.toml`, read from the default branch so a pull request can't relax its own rules. Every setting is optional, and other tables belong to other tools:
 
 ```toml
 [land]
 mode = "shadow"               # "off" stops the report, "enforce" lets a local tool merge
-profile = "standard"          # "side-project", "standard" or "critical"
+profile = "standard"          # "side-project", "standard" or "critical" (the default)
 required_checks = ["test"]    # needed for anything to merge unattended
 authors = ["adlrocha"]        # whose pull requests may merge unattended; empty means any human
 always_human = ["src/auth/**"]
@@ -204,11 +204,13 @@ newsletter = "Changes who gets an email, or when"
 
 | Profile | Paths that always need a person |
 | --- | --- |
-| `side-project` | `.nibble/sdlc.toml` and the reviewer's own workflow, which no profile can drop |
-| `standard` | Also CI, the rest of `.nibble/`, database migrations and schemas, agent instructions and settings (`AGENTS.md`, `.claude/`, `.mcp.json`, and similar), git hooks, `.env` files, `CODEOWNERS`, and `.gitmodules` |
+| `side-project` | `.nibble/sdlc.toml`, workflows, and local actions, which no profile can drop: a workflow in the pull request could post as the reviewer |
+| `standard` | Also other CI settings, the rest of `.nibble/`, database migrations and schemas, agent instructions and settings (`AGENTS.md`, `.claude/`, `.mcp.json`, and similar), git hooks, `.env` files, `CODEOWNERS`, and `.gitmodules` |
 | `critical` | Also dependency manifests and lockfiles, build and install scripts, containers, and infrastructure |
 
-Patterns match inside dot directories and ignore letter case. `max_review_rounds` is accepted in older files and no longer read.
+Patterns match inside dot directories and ignore letter case, and a folder name covers everything in it. The exact lists are `PROFILE_PATHS` in [src/lib/land.ts](src/lib/land.ts).
+
+**What land can't prove.** Reviews post as `github-actions[bot]`, and anyone who can push a branch can run a workflow that posts as it. The path rules stop that from inside the pull request, not from another branch. Use the App identity if people you don't trust can push. `max_review_rounds` is accepted in older files and no longer read.
 
 ## Fixer (experimental)
 

@@ -48,16 +48,45 @@ test("checks combine runs and the newest status of each context", async t => {
       { context: "legacy", state: "error" }
     ]
   })
+  const check = (name, state, source = "run") => ({ name, state, source })
   assert.deepEqual(await github.listCommitChecks(sha), [
-    { name: "test", state: "success" },
-    { name: "optional", state: "success" },
-    { name: "info", state: "success" },
-    { name: "lint", state: "failure" },
-    { name: "e2e", state: "pending" },
-    { name: "deploy", state: "success" },
-    { name: "scan", state: "pending" },
-    { name: "legacy", state: "failure" }
+    check("test", "success"),
+    check("optional", "skipped"),
+    check("info", "skipped"),
+    check("lint", "failure"),
+    check("e2e", "pending"),
+    check("deploy", "success", "status"),
+    check("scan", "pending", "status"),
+    check("legacy", "failure", "status")
   ])
+})
+
+test("an App's threads carry the login REST gives its bot", async t => {
+  const thread = author => ({ id: "t", isResolved: false, comments: { nodes: [{ body: "x", author }] } })
+  const github = mockRest(t, {
+    "/graphql": {
+      data: {
+        repository: {
+          pullRequest: {
+            reviewThreads: {
+              nodes: [
+                thread({ login: "github-actions", __typename: "Bot" }),
+                thread({ login: "nibble[bot]", __typename: "Bot" }),
+                thread({ login: "ana", __typename: "User" }),
+                thread(null)
+              ],
+              pageInfo: { hasNextPage: false }
+            }
+          }
+        }
+      }
+    }
+  })
+  const { threads } = await github.listReviewThreads(1)
+  assert.deepEqual(
+    threads.map(({ comments }) => comments[0].user.login),
+    ["github-actions[bot]", "nibble[bot]", "ana", null]
+  )
 })
 
 test("base drift lists both names of a rename and flags a partial list", async t => {
