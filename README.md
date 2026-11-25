@@ -138,7 +138,7 @@ Models investigate and write. They do not decide which commit was reviewed, whet
 | `allow-skip` | `true` | Honor `[skip]` titles and `@nibble-review skip` body lines from trusted human authors. Set `false` when the review check is required for merging. |
 | `install-dependencies` | `false` | Install the repository's npm/pnpm/yarn dependencies first. Runs their install scripts. |
 | `emojis` | `true` | Prefix inline comments with severity emojis. |
-| `land` | `false` | Report whether each head could merge without a person. See [Land](#land). |
+| `land` | `false` | Report whether a fixed rule stops each head from merging without a person. See [Land](#land). |
 | `timeout-minutes` | `30` | Upper bound for each review attempt. |
 | `reuse-lanes` | `true` | Let the fallback attempt reuse the lanes the failed attempt finished, within the same job. See below. |
 
@@ -184,7 +184,7 @@ A head has one of three outcomes:
 
 Review rounds and size decide nothing on their own. Counted lines leave out Markdown and text files, snapshots, lockfiles, and files every common layout would call a test; code counts in any folder, `dist/` and `docs/` included. Weakened tests (a removed or renamed-away test file, removed assertions, a skip or focus marker) and severe findings closed by a reply alone are listed for the judge to weigh.
 
-Merging is left to a local tool. `node dist/cli/land.js --json` prints the decision as JSON, adding what only matters at merge time: the pull request is open, not a draft, and free of conflicts; no check on the head failed or is still running; every one of `required_checks` is a check run that succeeded, not one that was skipped; nobody's review asks for changes; it targets the default branch and did so when it was reviewed; and the base branch hasn't changed the same files. It also carries the evidence a judge reads: the diff, linked issues, reviews, threads, comments, and the repository's `.nibble/risk.md`. It writes nothing. [`nibble land`](https://github.com/adlrocha/nibble/blob/main/docs/land.md) uses it to judge and merge.
+Merging is left to a local tool. `node dist/cli/land.js --json`, with `GH_TOKEN`, `GITHUB_REPOSITORY` and `PR_NUMBER` set, prints the decision as JSON, adding what only matters at merge time: the pull request is open, not a draft, and free of conflicts; no check on the head failed or is still running; every one of `required_checks` is a check run that succeeded, not one that was skipped; nobody's review asks for changes; it targets the default branch and did so when it was reviewed; and the base branch hasn't changed the same files. It also carries the evidence a judge reads: the diff, linked issues, reviews, threads, comments, and the repository's `.nibble/risk.md`. It writes nothing. [`nibble land`](https://github.com/adlrocha/nibble/blob/main/docs/land.md) uses it to judge and merge.
 
 Settings live in the `[land]` table of `.nibble/sdlc.toml`, read from the default branch so a pull request can't relax its own rules. Every setting is optional, and other tables belong to other tools:
 

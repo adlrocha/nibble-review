@@ -74,7 +74,7 @@ inputs:
 
   land:
     description: >-
-      Report whether each pull-request head could merge without a person, as a "## Risk" comment and a nibble-review/land commit status. Reads .nibble/sdlc.toml from the default branch and needs the statuses:write permission. Advisory only: it never merges or blocks.
+      Report whether a fixed rule stops each pull-request head from merging without a person, as a "## Risk" comment and a nibble-review/land commit status. Reads .nibble/sdlc.toml from the default branch and needs the statuses:write permission. Advisory only: it never merges or blocks.
     required: false
     default: "false"
 
