@@ -182,7 +182,7 @@ A head has one of three outcomes:
 | Needs you | A fixed rule needs a person | A bot or App opened it, or someone outside `authors`; no `required_checks` are set; it touches a path the profile or `always_human` protects; it is over `max_lines`, if set |
 | Ready for the judge | No fixed rule stops it | Everything else |
 
-Review rounds and size decide nothing on their own. Weakened tests (a removed or renamed-away test file, removed assertions, a skip or focus marker) and severe findings closed by a reply alone are listed for the judge to weigh.
+Review rounds and size decide nothing on their own. Counted lines leave out Markdown and text files, snapshots, lockfiles, and files every common layout would call a test; code counts in any folder, `dist/` and `docs/` included. Weakened tests (a removed or renamed-away test file, removed assertions, a skip or focus marker) and severe findings closed by a reply alone are listed for the judge to weigh.
 
 Merging is left to a local tool. `node dist/cli/land.js --json` prints the decision as JSON, adding what only matters at merge time: the pull request is open, not a draft, and free of conflicts; no check on the head failed or is still running; every one of `required_checks` is a check run that succeeded, not one that was skipped; nobody's review asks for changes; it targets the default branch and did so when it was reviewed; and the base branch hasn't changed the same files. It also carries the evidence a judge reads: the diff, linked issues, reviews, threads, comments, and the repository's `.nibble/risk.md`. It writes nothing. [`nibble land`](https://github.com/adlrocha/nibble/blob/main/docs/land.md) uses it to judge and merge.
 

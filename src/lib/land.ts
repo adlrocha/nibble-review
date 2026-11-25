@@ -5,7 +5,7 @@ import { z } from "zod"
 import type { CommitCheck, PullRequestFile } from "../services/github/client.js"
 import { GITHUB_ACTIONS_BOT_LOGIN, REVIEW_MARKER } from "./review-authorship.js"
 import { isIgnoredLockfile } from "./review-diff.js"
-import { inlineSeverityPrefix, type ReviewVerdictLabel } from "./review-queue.js"
+import { inlineSeverityPrefix, SEVERE_SEVERITIES, type ReviewVerdictLabel } from "./review-queue.js"
 
 /** Commit status context that carries the land decision for one pull-request head. */
 export const LAND_STATUS_CONTEXT = "nibble-review/land"
@@ -202,8 +202,6 @@ export type MergeFacts = {
   checks: CommitCheck[]
   /** People whose latest review requests changes. */
   changesRequestedBy: string[]
-  /** Set when the pull request doesn't target the branch its policy describes. */
-  otherBase: string | null
   /** True when the base branch was changed after the last full review. */
   retargeted: boolean
   /** Files that changed on both the base branch and this pull request since they diverged. */
@@ -218,6 +216,8 @@ export type LandInput = {
   files: PullRequestFile[]
   threads: LandThread[]
   config: SdlcConfig
+  /** Set when the pull request doesn't target the branch its policy describes. */
+  otherBase: string | null
   /** True unless the head branch lives in this repository. */
   isFork: boolean
   /** The mention that asks this repository's reviewer for a review. */
@@ -401,7 +401,7 @@ function testWeakening(file: PullRequestFile): string | null {
 function isSevere(body: string): boolean {
   const text = body.trim()
   const [first] = text.split(/\s+/u, 1)
-  return (["critical", "high"] as const).some(severity => {
+  return SEVERE_SEVERITIES.some(severity => {
     const prefix = inlineSeverityPrefix(severity)
     return text.startsWith(prefix) || text.startsWith(`${first} ${prefix}`)
   })
@@ -519,8 +519,8 @@ export function evaluateLand(input: LandInput): LandDecision {
   if (hits.length > 0) {
     asks.push(`always-human paths: ${shownPaths(hits)}`)
   }
-  if (input.merge?.otherBase) {
-    asks.push(`it targets ${codeSpan(input.merge.otherBase)}, and the policy only describes the default branch`)
+  if (input.otherBase !== null) {
+    asks.push(`it targets ${codeSpan(input.otherBase)}, and the policy only describes the default branch`)
   }
   const lines = countedLines(files)
   if (config.land.max_lines !== undefined && lines > config.land.max_lines) {

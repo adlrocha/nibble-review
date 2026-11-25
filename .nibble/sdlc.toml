@@ -16,7 +16,9 @@ always_human = [
   "src/cli/land.ts",
   "src/components/phases",
   "src/instructions",
-  "src/services/github/client.ts",
+  "src/review.tsx",
+  "src/services/github",
+  "src/tools",
   "src/services/review-preflight.ts",
   "src/services/review-evidence.ts"
 ]

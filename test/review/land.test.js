@@ -41,6 +41,7 @@ const clean = {
   files: [file("src/app.ts")],
   threads: [],
   config,
+  otherBase: null,
   isFork: false,
   command: "@nibble-review"
 }
@@ -62,7 +63,6 @@ const mergeFacts = (overrides = {}) => ({
   mergeable: true,
   checks: [{ name: "test", state: "success", source: "run" }],
   changesRequestedBy: [],
-  otherBase: null,
   retargeted: false,
   overlappingFiles: [],
   ...overrides
@@ -386,7 +386,7 @@ test("a merge attempt also needs an open, mergeable, current, green pull request
   assert.deepEqual(also({ state: "pending" }), ["check is pending: `lint`"])
   assert.deepEqual(also({ state: "skipped" }), [])
   assert.match(merging({ retargeted: true })[0], /^the base branch changed after the last full review/u)
-  assert.match(asks({ merge: mergeFacts({ otherBase: "production" }) })[0], /^it targets `production`/u)
+  assert.match(asks({ otherBase: "production" })[0], /^it targets `production`/u)
 })
 
 test("config defaults, overrides, and rejects what does not exist", () => {
@@ -516,6 +516,7 @@ function fakeGitHub(overrides = {}) {
     },
     getPullRequest: async () => ({
       headRefOid: head,
+      baseRefName: "main",
       head: { repo: { full_name: "o/r" } },
       user: { login: "owner", type: "User" },
       author: { login: "owner" }
@@ -622,10 +623,11 @@ test("land refuses to decide on a partial file list", async () => {
     getPullRequest: async () => ({ headRefOid: head, changed_files: 3400 })
   })
   await assert.rejects(runLand(partial.github, target, bot, true), /listed only 1 of the changed files/u)
-  const capped = fakeGitHub({
-    listPullRequestFiles: async () => Array.from({ length: 3000 }, (_, index) => file(`${index}.ts`))
-  })
-  await assert.rejects(runLand(capped.github, target, bot, true), /listed only 3000/u)
+  const all = Array.from({ length: 3000 }, (_, index) => file(`${index}.ts`))
+  const exact = fakeGitHub({ listPullRequestFiles: async () => all })
+  const pr = await exact.github.getPullRequest()
+  exact.github.getPullRequest = async () => ({ ...pr, changed_files: 3000 })
+  assert.equal(await runLand(exact.github, target, bot, true), "ready for the judge")
 })
 
 test("a delta record only counts from an issue comment", async () => {
@@ -682,6 +684,20 @@ test("review prose quoting the risk marker is neither overwritten nor dropped", 
   github.listPullRequestComments = async () => [own(`Quoting ${RISK_COMMENT_MARKER} here`)]
   assert.equal(await runLand(github, target, bot, true), "ready for the judge")
   assert.equal(writes[1][0], "comment")
+})
+
+test("every entry point holds a pull request into another branch", async () => {
+  const { github } = fakeGitHub()
+  const pr = await github.getPullRequest()
+  github.getPullRequest = async () => ({ ...pr, baseRefName: "production" })
+  assert.match(await runLand(github, target, bot, true), /needs you \(it targets production/u)
+  github.getPullRequest = async () => ({ ...pr, baseRefName: null })
+  assert.match(await runLand(github, target, bot, true), /needs you \(it targets unknown/u)
+})
+
+test("without a login from the action, the policy names the reviewer", async () => {
+  const { github } = fakeGitHub()
+  assert.equal(await runLand(github, target, undefined, true), "ready for the judge")
 })
 
 test("land off writes nothing", async () => {

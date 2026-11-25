@@ -31,7 +31,7 @@ import {
   type PullRequestSummary,
   type ReviewThread
 } from "../services/github/client.js"
-import { DEFAULT_REVIEW_BOT_LOGIN, REVIEW_COMMAND } from "../services/review-evidence.js"
+import { REVIEW_COMMAND } from "../services/review-evidence.js"
 import { ReviewPreflight } from "../services/review-preflight.js"
 
 /** One of this reviewer's top-level bodies, and whether it was posted as a review or a comment. */
@@ -145,7 +145,7 @@ async function gatherFacts(
     throw new Error("review threads are unavailable, so no decision was made")
   }
   // GitHub stops listing at a cap, and a rule can't protect a path it never saw.
-  if (files.length >= MAX_PULL_REQUEST_FILES || (pullRequest.changed_files ?? files.length) !== files.length) {
+  if (files.length > MAX_PULL_REQUEST_FILES || (pullRequest.changed_files ?? files.length) !== files.length) {
     throw new Error(`GitHub listed only ${files.length} of the changed files, so no decision was made`)
   }
   const authorship = reviewAuthorship(source.botLogin ?? config.land.reviewer)
@@ -181,6 +181,8 @@ function decide(facts: LandFacts, target: LandTarget, merge?: MergeFacts): LandD
       isOwn: facts.authorship.isOwn(thread.comments[0])
     })),
     config: facts.config,
+    otherBase:
+      facts.pullRequest.baseRefName === facts.defaultBranch ? null : (facts.pullRequest.baseRefName ?? "unknown"),
     isFork: facts.pullRequest.head?.repo?.full_name !== target.repository,
     command: target.command ?? REVIEW_COMMAND,
     merge
@@ -227,7 +229,6 @@ async function gatherMergeFacts(github: GitHubClient, prNumber: number, facts: L
     mergeable: pullRequest.mergeable ?? null,
     checks,
     changesRequestedBy: changesRequestedBy(facts.reviews),
-    otherBase: base === facts.defaultBranch ? null : base,
     // A verdict judged the diff against the old base, so a new base needs a new one.
     retargeted: timeline.some(
       event => event.event === "base_ref_changed" && String(event.created_at ?? "") > reviewedAt
@@ -248,7 +249,7 @@ async function gatherMergeFacts(github: GitHubClient, prNumber: number, facts: L
 export async function runLand(
   github: GitHubClient,
   target: LandTarget,
-  botLogin: string,
+  botLogin: string | undefined,
   publish: boolean
 ): Promise<string> {
   const { prNumber } = target
@@ -414,6 +415,8 @@ export async function main(argv = process.argv.slice(2), env = process.env): Pro
     const { github, repository, prNumber } = readTarget(env)
     const command = env.REVIEW_COMMAND?.trim() || undefined
     const target = { repository, prNumber, command }
+    // The action knows which account it posts as. Without it, the policy says.
+    const botLogin = env.REVIEW_BOT_LOGIN || undefined
     const { values } = parseArgs({
       args: argv,
       options: { publish: { type: "boolean" }, json: { type: "boolean" }, config: { type: "string" } },
@@ -425,8 +428,7 @@ export async function main(argv = process.argv.slice(2), env = process.env): Pro
         throw new Error("--json never publishes")
       }
       const configText = values.config === undefined ? null : readFileSync(values.config, "utf8")
-      // Local callers have no App token to name the reviewer, so the policy does.
-      const bundle = await landBundle(github, target, { botLogin: env.REVIEW_BOT_LOGIN || undefined, configText })
+      const bundle = await landBundle(github, target, { botLogin, configText })
       process.stdout.write(`${JSON.stringify(bundle)}\n`)
       return
     }
@@ -446,7 +448,7 @@ export async function main(argv = process.argv.slice(2), env = process.env): Pro
         return
       }
     }
-    const result = await runLand(github, target, env.REVIEW_BOT_LOGIN || DEFAULT_REVIEW_BOT_LOGIN, publish)
+    const result = await runLand(github, target, botLogin, publish)
     process.stdout.write(`${result}\n`)
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)

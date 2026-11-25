@@ -651,12 +651,15 @@ export function inlineSeverityPrefix(severity: ReviewSeverity): string {
 
 export type ReviewVerdictLabel = "⛔ Block" | "⚠️ Request changes" | "✅ LGTM"
 
-/** True when a retained finding is critical or high, or blocks the whole change. */
+/** Severities a fast-tracked follow-up can't clear, which land blocks on. */
+export const SEVERE_SEVERITIES = ["critical", "high"] as const satisfies readonly ReviewSeverity[]
+
+/** True when a retained finding is severe, or blocks the whole change. */
 export function hasSevereFinding(findings: ReviewFinding[]): boolean {
   return findings.some(
     finding =>
       finding.kind === "blocker" ||
-      (finding.kind === "inline" && (finding.severity === "critical" || finding.severity === "high"))
+      (finding.kind === "inline" && SEVERE_SEVERITIES.some(severity => severity === finding.severity))
   )
 }
 
