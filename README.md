@@ -161,7 +161,7 @@ A review that has published nothing a minute before `timeout-minutes` gives up a
 
 ## Land
 
-Land answers one question for each pull-request head: could this exact commit merge without a person? It's off unless a workflow sets `land: "true"`, and it runs after the review as a separate step with no model. The commit status also needs `statuses: write`; without it you still get the comment, plus a warning. **Land never merges or blocks anything.** It only reports, so a failure is a warning, and removing the input turns it all off.
+Land answers one question for each pull-request head: does anything fixed stop this exact commit from merging without a person? It's off unless a workflow sets `land: "true"`, and it runs after the review as a separate step with no model. The commit status also needs `statuses: write`; without it you still get the comment, plus a warning. **The action never merges or blocks anything.** It only reports, so a failure is a warning, and removing the input turns it all off.
 
 ```yaml
 - uses: adlrocha/nibble-review@v1
@@ -174,26 +174,41 @@ Each run updates one `## Risk` comment and posts a `nibble-review/land` commit s
 
 Land counts only reviews published since it was enabled, because older ones have no verdict record. A pull request already open at that point reports "no full review" until its next full review.
 
-A head would need a person when any of these hold:
+A head has one of three outcomes:
 
-- it has no LGTM on that exact commit, the pull request has never had a full review, or the last full review blocked it and nothing but a fast-track came after;
-- a bot or App opened the pull request;
-- it has more review rounds than `max_review_rounds`;
-- it has more changed lines than `max_lines`, not counting docs, tests, or generated files;
-- it touches an always-human path: `.github/`, `.nibble/`, database migrations, the manifests and lockfiles of common package managers, build and CI files (`Dockerfile`, `build.rs`, `.cargo/config.toml`, `.npmrc`, `action.yml`), or anything in `always_human`. Patterns match inside dot directories and ignore letter case;
-- it removes a test file or assertions, or adds a skip or focus marker, in common test layouts;
-- a thread this reviewer opened is unresolved, or a critical finding was closed without its code changing. Other findings may be closed by a reply, because the reviewer can be wrong.
+| Outcome | Meaning | When |
+| --- | --- | --- |
+| Not ready | The agent still has work to do | No LGTM on this exact commit; no full review yet; the last full review blocked it, or raised a high or critical finding, and no full review has cleared it since; an unresolved review thread |
+| Needs you | A fixed rule needs a person | A bot or App opened it, or someone outside `authors`; no `required_checks` are set; it touches a path the profile or `always_human` protects; it is over `max_lines`, if set |
+| Ready for the judge | No fixed rule stops it | Everything else |
+
+Review rounds and size decide nothing on their own. Weakened tests (a removed or renamed-away test file, removed assertions, a skip or focus marker) and severe findings closed by a reply alone are listed for the judge to weigh.
+
+Merging is left to a local tool. `node dist/cli/land.js --json` prints the decision as JSON, adding what only matters at merge time: the pull request is open, not a draft, and free of conflicts; every check on the head passed, including all of `required_checks`; nobody's review asks for changes; and the base branch hasn't changed the same files. It also carries the evidence a judge reads: the diff, linked issues, reviews, threads, comments, and the repository's `.nibble/risk.md`. It writes nothing. [`nibble land`](https://github.com/adlrocha/nibble/blob/main/docs/land.md) uses it to judge and merge.
 
 Settings live in the `[land]` table of `.nibble/sdlc.toml`, read from the default branch so a pull request can't relax its own rules. Every setting is optional, and other tables belong to other tools:
 
 ```toml
 [land]
-mode = "shadow"          # "off" stops the comment and status; remove the land input to stop the rest
-main_is_staging = false  # shown in the Risk comment; changes no rule yet
-max_lines = 400
-max_review_rounds = 5
+mode = "shadow"               # "off" stops the report, "enforce" lets a local tool merge
+profile = "standard"          # "side-project", "standard" or "critical"
+required_checks = ["test"]    # needed for anything to merge unattended
+authors = ["adlrocha"]        # whose pull requests may merge unattended; empty means any human
 always_human = ["src/auth/**"]
+main_is_staging = false       # true when merging only reaches a staging environment
+# max_lines = 400             # a hard size limit; unset by default
+
+[land.ask_when]               # situations the judge must send to a person
+newsletter = "Changes who gets an email, or when"
 ```
+
+| Profile | Paths that always need a person |
+| --- | --- |
+| `side-project` | `.nibble/sdlc.toml` and the reviewer's own workflow, which no profile can drop |
+| `standard` | Also CI, the rest of `.nibble/`, database migrations and schemas, agent instructions and settings (`AGENTS.md`, `.claude/`, `.mcp.json`, and similar), git hooks, `.env` files, `CODEOWNERS`, and `.gitmodules` |
+| `critical` | Also dependency manifests and lockfiles, build and install scripts, containers, and infrastructure |
+
+Patterns match inside dot directories and ignore letter case. `max_review_rounds` is accepted in older files and no longer read.
 
 ## Fixer (experimental)
 

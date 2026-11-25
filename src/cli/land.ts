@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { realpathSync } from "node:fs"
+import { readFileSync, realpathSync } from "node:fs"
 import { parseArgs } from "node:util"
 import { fileURLToPath } from "node:url"
 
@@ -12,16 +12,23 @@ import {
   parseWhereToLook,
   renderRiskComment,
   RISK_COMMENT_MARKER,
+  RISK_MAP_PATH,
   statusDescription,
+  type LandDecision,
+  type MergeFacts,
+  type SdlcConfig,
   type VerdictRecord,
   type WhereToLook
 } from "../lib/land.js"
-import { reviewAuthorship, type ReviewAuthorship } from "../lib/review-authorship.js"
+import { GITHUB_ACTIONS_BOT_LOGIN, reviewAuthorship, type ReviewAuthorship } from "../lib/review-authorship.js"
 import {
   createGitHubClient,
   type GitHubClient,
   type IssueComment,
-  type PullRequestReview
+  type PullRequestFile,
+  type PullRequestReview,
+  type PullRequestSummary,
+  type ReviewThread
 } from "../services/github/client.js"
 import { DEFAULT_REVIEW_BOT_LOGIN } from "../services/review-evidence.js"
 import { ReviewPreflight } from "../services/review-preflight.js"
@@ -72,23 +79,31 @@ function latestWhereToLook(bodies: string[]): WhereToLook | null {
   return null
 }
 
-/**
- * Judges the current head and reports it. Never merges and never blocks.
- *
- * Without `publish` it writes nothing, matching the review CLI. Both writes
- * are safe to repeat: the comment is replaced and the status is per commit.
- */
-export async function runLand(
+/** Everything the fixed rules read about one pull-request head. */
+type LandFacts = {
+  pullRequest: PullRequestSummary
+  headSha: string
+  config: SdlcConfig
+  comments: IssueComment[]
+  reviews: PullRequestReview[]
+  files: PullRequestFile[]
+  threads: ReviewThread[]
+  authorship: ReviewAuthorship
+  own: OwnBody[]
+}
+
+/** Reads the policy and the pull request, or null when land is off. */
+async function gatherFacts(
   github: GitHubClient,
   prNumber: number,
   botLogin: string,
-  publish: boolean
-): Promise<string> {
+  configOverride: string | null = null
+): Promise<LandFacts | null> {
   const defaultBranch = await github.getDefaultBranch()
   // The default branch, never the PR head, so a pull request cannot relax its own rules.
-  const config = parseSdlcConfig(await github.getRepositoryFile(LAND_CONFIG_PATH, defaultBranch))
+  const config = parseSdlcConfig(configOverride ?? (await github.getRepositoryFile(LAND_CONFIG_PATH, defaultBranch)))
   if (config.land.mode === "off") {
-    return "land is off"
+    return null
   }
 
   const pullRequest = await github.getPullRequest(prNumber)
@@ -106,26 +121,92 @@ export async function runLand(
   if (!threads.available) {
     throw new Error("review threads are unavailable, so no decision was made")
   }
-
   const authorship = reviewAuthorship(botLogin)
   // The risk comment is land's own output, so it never counts as review evidence.
   const own = ownBodies(authorship, comments, reviews).filter(item => !item.body.startsWith(RISK_COMMENT_MARKER))
-  const decision = evaluateLand({
-    headSha,
-    authorIsBot: pullRequest.user?.type === "Bot",
-    records: own.map(trustedRecord).filter(record => record !== null),
-    files,
-    threads: threads.threads
-      .filter(thread => authorship.isOwn(thread.comments[0]))
-      .map(thread => ({
-        is_resolved: thread.is_resolved,
-        is_outdated: thread.is_outdated,
-        path: thread.path,
-        firstBody: thread.comments[0]?.body ?? ""
-      })),
-    config
-  })
+  return { pullRequest, headSha, config, comments, reviews, files, threads: threads.threads, authorship, own }
+}
 
+/** Applies the fixed rules to gathered facts. */
+function decide(facts: LandFacts, merge?: MergeFacts): LandDecision {
+  return evaluateLand({
+    headSha: facts.headSha,
+    author: facts.pullRequest.user?.login ?? facts.pullRequest.author?.login ?? "",
+    authorIsBot: facts.pullRequest.user?.type === "Bot",
+    records: facts.own.map(trustedRecord).filter(record => record !== null),
+    files: facts.files,
+    threads: facts.threads.map(thread => ({
+      is_resolved: thread.is_resolved,
+      is_outdated: thread.is_outdated,
+      path: thread.path,
+      firstBody: thread.comments[0]?.body ?? "",
+      isOwn: facts.authorship.isOwn(thread.comments[0])
+    })),
+    config: facts.config,
+    merge
+  })
+}
+
+/** People whose latest decisive review asks for changes. */
+function changesRequestedBy(reviews: PullRequestReview[]): string[] {
+  const latest = new Map<string, string>()
+  const dated = reviews.toSorted((left, right) =>
+    String(left.submitted_at ?? left.submittedAt ?? "").localeCompare(
+      String(right.submitted_at ?? right.submittedAt ?? "")
+    )
+  )
+  for (const review of dated) {
+    const login = review.user?.login
+    // A plain comment leaves an earlier decision in place.
+    if (login && review.user?.type !== "Bot" && review.state !== "COMMENTED" && review.state !== "PENDING") {
+      latest.set(login, String(review.state))
+    }
+  }
+  return [...latest].filter(([, state]) => state === "CHANGES_REQUESTED").map(([login]) => login)
+}
+
+/** Reads what only matters when someone is about to merge. */
+async function gatherMergeFacts(github: GitHubClient, facts: LandFacts): Promise<MergeFacts> {
+  const { pullRequest, headSha } = facts
+  const base = pullRequest.base?.ref ?? pullRequest.baseRefName
+  if (!base) {
+    throw new Error("the pull request has no base branch")
+  }
+  const [checks, drift] = await Promise.all([github.listCommitChecks(headSha), github.getBaseDrift(base, headSha)])
+  const changed = new Set(
+    facts.files.flatMap(file => [file.filename, ...(file.previous_filename ? [file.previous_filename] : [])])
+  )
+  return {
+    isOpen: pullRequest.state === "open" || pullRequest.state === "OPEN",
+    isDraft: (pullRequest.draft ?? pullRequest.isDraft) === true,
+    mergeable: pullRequest.mergeable ?? null,
+    checks,
+    changesRequestedBy: changesRequestedBy(facts.reviews),
+    // A partial list can't prove there is no overlap, so it counts as one.
+    overlappingFiles: drift.truncated
+      ? [...changed]
+      : [...new Set(drift.files.filter(file => changed.has(file)))].toSorted()
+  }
+}
+
+/**
+ * Checks the current head against the fixed rules and reports it. Never merges and never blocks.
+ *
+ * Without `publish` it writes nothing, matching the review CLI. Both writes
+ * are safe to repeat: the comment is replaced and the status is per commit.
+ */
+export async function runLand(
+  github: GitHubClient,
+  prNumber: number,
+  botLogin: string,
+  publish: boolean
+): Promise<string> {
+  const facts = await gatherFacts(github, prNumber, botLogin)
+  if (!facts) {
+    return "land is off"
+  }
+  const { authorship, comments, config, headSha, own } = facts
+  const decision = decide(facts)
   const whereToLook = latestWhereToLook(own.map(item => item.body))
   const body = renderRiskComment({ headSha, decision, config, whereToLook })
   if (!publish) {
@@ -141,7 +222,7 @@ export async function runLand(
   if (existing.length === 0) {
     await github.createPullRequestComment(prNumber, body)
   }
-  // Shadow mode always reports success, so it can never block a pull request.
+  // The CI report always succeeds, so it can never block a pull request.
   await github.createCommitStatus(headSha, {
     state: "success",
     context: LAND_STATUS_CONTEXT,
@@ -150,18 +231,125 @@ export async function runLand(
   return statusDescription(decision)
 }
 
-/** Action entry point: land is advisory here, so any failure is a warning, not a red job. */
+/** Version of the bundle's shape, so a reader can reject one it doesn't know. */
+export const LAND_BUNDLE_VERSION = 1
+
+/**
+ * Builds everything a local merge tool needs: the fixed-rule decision with
+ * merge facts, and the evidence its judge reads. It writes nothing.
+ *
+ * `configText` replaces the default branch's policy, for replaying past pull
+ * requests against a proposed one. A merge must never pass it.
+ */
+export async function landBundle(
+  github: GitHubClient,
+  repository: string,
+  prNumber: number,
+  botLogin: string,
+  configText: string | null = null
+) {
+  const facts = await gatherFacts(github, prNumber, botLogin, configText)
+  if (!facts) {
+    return { version: LAND_BUNDLE_VERSION, mode: "off" as const }
+  }
+  const { comments, config, files, headSha, pullRequest, reviews, threads } = facts
+  const [merge, riskMap, issues, diff] = await Promise.all([
+    gatherMergeFacts(github, facts),
+    github.getDefaultBranch().then(branch => github.getRepositoryFile(RISK_MAP_PATH, branch)),
+    github.listPullRequestClosingIssues(prNumber),
+    // GitHub refuses very large diffs. The reader then has nothing to judge, so it asks.
+    github.getPullRequestDiff(prNumber).catch(() => null)
+  ])
+  const decision = decide(facts, merge)
+  const isFork = pullRequest.head?.repo?.full_name !== repository
+  const asks = isFork ? [...decision.asks, "opened from a fork"] : decision.asks
+  return {
+    version: LAND_BUNDLE_VERSION,
+    mode: config.land.mode,
+    policy: config.land,
+    pullRequest: {
+      repository,
+      number: prNumber,
+      title: pullRequest.title ?? "",
+      body: pullRequest.body ?? "",
+      author: pullRequest.user?.login ?? "",
+      base: pullRequest.base?.ref ?? pullRequest.baseRefName ?? "",
+      headSha
+    },
+    decision: {
+      ...decision,
+      asks,
+      outcome: decision.outcome === "ready" && asks.length > 0 ? ("ask" as const) : decision.outcome
+    },
+    files: files.map(({ filename, status, additions, deletions }) => ({ filename, status, additions, deletions })),
+    diff,
+    riskMap,
+    issues: issues.map(({ number, title, body }) => ({ number, title: title ?? "", body: body ?? "" })),
+    reviews: reviews
+      .filter(review => String(review.body ?? "").trim() !== "")
+      .map(review => ({
+        author: review.user?.login ?? "",
+        state: review.state ?? "",
+        at: review.submitted_at ?? review.submittedAt ?? "",
+        body: review.body ?? ""
+      })),
+    threads: threads.map(thread => ({
+      path: thread.path,
+      resolved: thread.is_resolved,
+      codeChanged: thread.is_outdated,
+      comments: thread.comments.map(comment => ({ author: comment.user.login ?? "", body: comment.body }))
+    })),
+    comments: comments.map(comment => ({
+      author: comment.user?.login ?? "",
+      association: comment.author_association ?? "",
+      at: comment.created_at ?? "",
+      body: comment.body ?? ""
+    }))
+  }
+}
+
+/** Reads the pull request and token land works with, failing when one is missing. */
+function readTarget(env: NodeJS.ProcessEnv): { github: GitHubClient; repository: string; prNumber: number } {
+  const token = env.GH_TOKEN || env.GITHUB_TOKEN
+  const repository = env.GITHUB_REPOSITORY
+  const prNumber = Number(env.PR_NUMBER)
+  if (!token || !repository || !Number.isInteger(prNumber) || prNumber <= 0) {
+    throw new Error("GH_TOKEN, GITHUB_REPOSITORY and PR_NUMBER are required")
+  }
+  return { github: createGitHubClient({ token, repository }), repository, prNumber }
+}
+
+/**
+ * Entry point for the action and for local tools.
+ *
+ * In the action land is advisory, so any failure is a warning, not a red job.
+ * With `--json` a caller acts on the output, so a failure is an exit code.
+ */
 export async function main(argv = process.argv.slice(2), env = process.env): Promise<void> {
+  // Decided before parsing, so a mistyped option still fails the way its caller expects.
+  const json = argv.includes("--json")
   try {
-    const token = env.GH_TOKEN || env.GITHUB_TOKEN
-    const repository = env.GITHUB_REPOSITORY
-    const prNumber = Number(env.PR_NUMBER)
-    if (!token || !repository || !Number.isInteger(prNumber) || prNumber <= 0) {
-      throw new Error("GH_TOKEN, GITHUB_REPOSITORY and PR_NUMBER are required")
-    }
-    const { values } = parseArgs({ args: argv, options: { publish: { type: "boolean" } }, strict: true })
+    const { github, repository, prNumber } = readTarget(env)
+    const { values } = parseArgs({
+      args: argv,
+      options: { publish: { type: "boolean" }, json: { type: "boolean" }, config: { type: "string" } },
+      strict: true
+    })
     const publish = values.publish === true
-    const github = createGitHubClient({ token, repository })
+    if (json) {
+      // Local callers have no App token to name the reviewer, so they mean the action's default identity.
+      const botLogin = env.REVIEW_BOT_LOGIN || GITHUB_ACTIONS_BOT_LOGIN
+      if (publish) {
+        throw new Error("--json never publishes")
+      }
+      const configText = values.config === undefined ? null : readFileSync(values.config, "utf8")
+      const bundle = await landBundle(github, repository, prNumber, botLogin, configText)
+      process.stdout.write(`${JSON.stringify(bundle)}\n`)
+      return
+    }
+    if (values.config !== undefined) {
+      throw new Error("--config needs --json")
+    }
     if (publish) {
       // The action checks first, but direct runs don't, so the write boundary repeats the policy.
       const guard = await new ReviewPreflight({
@@ -179,6 +367,11 @@ export async function main(argv = process.argv.slice(2), env = process.env): Pro
     process.stdout.write(`${result}\n`)
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
+    if (json) {
+      process.stderr.write(`land: ${message}\n`)
+      process.exitCode = 1
+      return
+    }
     process.stdout.write(`::warning title=Nibble Review land::${message.replaceAll("\n", " ")}\n`)
   }
 }

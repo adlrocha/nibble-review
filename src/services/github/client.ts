@@ -178,6 +178,7 @@ export type PullRequestSummary = {
   html_url?: string | null
   isDraft?: boolean
   draft?: boolean
+  mergeable?: boolean | null
   reviewDecision?: string | null
   state?: string | null
   updated_at?: string | null
@@ -229,6 +230,19 @@ export type CommitStatus = {
   description: string
 }
 
+/** The combined state of one check run or commit status on a commit. */
+export type CommitCheck = {
+  name: string
+  state: "success" | "pending" | "failure"
+}
+
+/** How far a base branch moved since a head forked from it. */
+export type BaseDrift = {
+  files: string[]
+  /** True when GitHub listed only part of the changed files. */
+  truncated: boolean
+}
+
 export type ReviewThreadsResult = {
   available: boolean
   threads: ReviewThread[]
@@ -266,7 +280,17 @@ export type GitHubClient = {
   listPullRequestFiles(prNumber: number): Promise<PullRequestFile[]>
   updateIssueComment(commentId: number, body: string): Promise<void>
   createCommitStatus(sha: string, status: CommitStatus): Promise<void>
+  /** Lists the newest run of every check, and every commit status, on a commit. */
+  listCommitChecks(sha: string): Promise<CommitCheck[]>
+  /** Lists the files `base` changed since `head` forked from it. */
+  getBaseDrift(base: string, head: string): Promise<BaseDrift>
 }
+
+/** GitHub lists at most this many files in a comparison. */
+const MAX_COMPARED_FILES = 300
+
+/** Conclusions GitHub itself accepts for a required check. */
+const PASSING_CONCLUSIONS: ReadonlySet<string> = new Set(["success", "neutral", "skipped"])
 
 /**
  * Rejects a literal issue read that names a pull request. Missing resources
@@ -876,6 +900,58 @@ query($owner: String!, $name: String!, $number: Int!, $cursor: String) {
     async createCommitStatus(sha, status) {
       const { owner, repo } = splitRepository(options.repository)
       await octokit.request("POST /repos/{owner}/{repo}/statuses/{sha}", { owner, repo, sha, ...status })
+    },
+
+    async listCommitChecks(sha) {
+      const { owner, repo } = splitRepository(options.repository)
+      const runs = await octokit.paginate("GET /repos/{owner}/{repo}/commits/{ref}/check-runs", {
+        owner,
+        repo,
+        ref: sha,
+        filter: "latest",
+        per_page: 100
+      })
+      // Newest first, so the first status of a context is the current one.
+      const statuses = await octokit.paginate("GET /repos/{owner}/{repo}/commits/{ref}/statuses", {
+        owner,
+        repo,
+        ref: sha,
+        per_page: 100
+      })
+      const seen = new Set<string>()
+      const current = statuses.filter(status => !seen.has(status.context) && Boolean(seen.add(status.context)))
+      return [
+        ...runs.map(run => ({
+          name: run.name,
+          state:
+            run.status !== "completed"
+              ? ("pending" as const)
+              : PASSING_CONCLUSIONS.has(run.conclusion ?? "")
+                ? ("success" as const)
+                : ("failure" as const)
+        })),
+        ...current.map(status => ({
+          name: status.context,
+          state:
+            status.state === "success" || status.state === "pending"
+              ? (status.state as "success" | "pending")
+              : ("failure" as const)
+        }))
+      ]
+    },
+
+    async getBaseDrift(base, head) {
+      const { owner, repo } = splitRepository(options.repository)
+      const response = await octokit.request("GET /repos/{owner}/{repo}/compare/{basehead}", {
+        owner,
+        repo,
+        basehead: `${head}...${base}`
+      })
+      const files = response.data.files ?? []
+      return {
+        files: files.flatMap(file => [file.filename, ...(file.previous_filename ? [file.previous_filename] : [])]),
+        truncated: files.length >= MAX_COMPARED_FILES
+      }
     }
   }
 }
