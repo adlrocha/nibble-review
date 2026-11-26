@@ -1,4 +1,6 @@
-# Dogfoods the reviewer on its own pull requests using the latest main.
+# Reviews this repository's pull requests with the latest release, pinned by commit,
+# so the reviewer that decides what merges here is never the code being merged.
+# `nibble sdlc install` moves the pin to the newest release; a person runs it after releasing.
 name: Nibble Review
 
 on:
@@ -37,7 +39,9 @@ jobs:
       group: nibble-review-${{ github.event.pull_request.number || github.event.issue.number || github.event.inputs.pr_number }}
       cancel-in-progress: true
     steps:
-      - uses: adlrocha/nibble-review@main
+      - uses: adlrocha/nibble-review@aa81f1ac033ebc5f86ed6114be7225bd2f78debe # v1.3.0
         with:
           land: "true"
+          # review is a required check, so a [skip] title must not pass it
+          allow-skip: "false"
           api-key: ${{ secrets.OPENCODE_API_KEY }}
