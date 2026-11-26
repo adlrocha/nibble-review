@@ -2,10 +2,10 @@ import { minimatch } from "minimatch"
 import { parse as parseToml } from "smol-toml"
 import { z } from "zod"
 
-import type { PullRequestFile } from "../services/github/client.js"
-import { REVIEW_MARKER } from "./review-authorship.js"
+import type { CommitCheck, PullRequestFile } from "../services/github/client.js"
+import { GITHUB_ACTIONS_BOT_LOGIN, REVIEW_MARKER } from "./review-authorship.js"
 import { isIgnoredLockfile } from "./review-diff.js"
-import { inlineSeverityPrefix, type ReviewVerdictLabel } from "./review-queue.js"
+import { inlineSeverityPrefix, SEVERE_SEVERITIES, type ReviewVerdictLabel } from "./review-queue.js"
 
 /** Commit status context that carries the land decision for one pull-request head. */
 export const LAND_STATUS_CONTEXT = "nibble-review/land"
@@ -21,13 +21,63 @@ export const WHERE_TO_LOOK_HEADING = "## Where to look"
 
 const MAX_STATUS_DESCRIPTION = 140
 
-/** Paths that always need a person: merging them acts on CI, dependencies, data, or these rules. */
-export const BUILT_IN_ALWAYS_HUMAN: readonly string[] = [
+/** Repository path of the optional risk map, which is context for the judge and never a rule. */
+export const RISK_MAP_PATH = ".nibble/risk.md"
+
+/** How much a repository lets agents merge on their own. */
+export const LAND_PROFILES = ["side-project", "standard", "critical"] as const
+export type LandProfile = (typeof LAND_PROFILES)[number]
+
+/**
+ * Paths that decide what merges. No profile or setting can drop these.
+ *
+ * Every workflow counts, not only the reviewer's: a workflow in the pull
+ * request runs with a token that can post as the reviewer.
+ */
+const GATE_PATHS: readonly string[] = [
+  ".nibble/sdlc.toml",
+  ".github/workflows/**",
+  ".github/actions/**",
+  "**/action.yml",
+  "**/action.yaml"
+]
+
+/** Paths where merging acts on CI, secrets, stored data, or the rules agents follow. */
+const STANDARD_PATHS: readonly string[] = [
   ".github/**",
+  ".gitlab-ci.yml",
+  ".circleci/**",
+  "**/Jenkinsfile",
   ".nibble/**",
   "**/migrations/**",
   "**/db/migrate/**",
   "**/db/migration/**",
+  "**/drizzle/**/*.sql",
+  "**/alembic/versions/**",
+  "**/db/schema.rb",
+  "**/*.prisma",
+  "**/AGENTS*.md",
+  "**/CLAUDE*.md",
+  "**/GEMINI*.md",
+  "**/.agents/**",
+  "**/.claude/**",
+  "**/.pi/**",
+  "**/.codex/**",
+  "**/.cursor/**",
+  "**/.cursorrules",
+  "**/.mcp.json",
+  "**/.husky/**",
+  "**/.githooks/**",
+  "**/lefthook.y*ml",
+  "**/.pre-commit-config.y*ml",
+  "**/.env*",
+  "**/CODEOWNERS",
+  "**/.gitmodules",
+  "**/.gitattributes"
+]
+
+/** Paths that change dependencies, builds, or infrastructure. */
+const CRITICAL_PATHS: readonly string[] = [
   "**/package.json",
   "**/package-lock.json",
   "**/pnpm-lock.yaml",
@@ -36,7 +86,12 @@ export const BUILT_IN_ALWAYS_HUMAN: readonly string[] = [
   "**/Cargo.lock",
   "**/go.mod",
   "**/go.sum",
+  "**/go.work",
+  "**/deno.json*",
+  "**/flake.nix",
+  "**/flake.lock",
   "**/requirements*.txt",
+  "**/requirements/*.txt",
   "**/pyproject.toml",
   "**/poetry.lock",
   "**/uv.lock",
@@ -51,6 +106,7 @@ export const BUILT_IN_ALWAYS_HUMAN: readonly string[] = [
   "**/pom.xml",
   "**/build.gradle",
   "**/build.gradle.kts",
+  "**/settings.gradle*",
   "**/mix.exs",
   "**/mix.lock",
   "**/.npmrc",
@@ -59,23 +115,56 @@ export const BUILT_IN_ALWAYS_HUMAN: readonly string[] = [
   "**/build.rs",
   "**/Dockerfile",
   "**/Dockerfile.*",
-  "**/action.yml",
-  "**/action.yaml"
+  "**/Containerfile*",
+  "**/docker-compose*.y*ml",
+  "**/compose*.y*ml",
+  "**/*.tf",
+  "**/*.tfvars",
+  "**/helm/**",
+  "**/k8s/**",
+  "**/Makefile",
+  "**/install.sh"
 ]
+
+/** The paths each profile sends to a person, before the repository's own `always_human`. */
+export const PROFILE_PATHS: Readonly<Record<LandProfile, readonly string[]>> = {
+  "side-project": GATE_PATHS,
+  standard: [...GATE_PATHS, ...STANDARD_PATHS],
+  critical: [...GATE_PATHS, ...STANDARD_PATHS, ...CRITICAL_PATHS]
+}
 
 // Dot directories and any letter case match too, so `.config/package.json` or
 // EF Core's `Migrations/` can't slip past a pattern.
-const GLOB_OPTIONS = { dot: true, nocase: true } as const
+// `!` and `#` are literal, so no pattern can quietly turn into an exclusion or a comment.
+const GLOB_OPTIONS = { dot: true, nocase: true, nonegate: true, nocomment: true } as const
+
+const nonEmpty = z.string().trim().min(1)
+
+/** A path pattern, rooted at the repository whichever way it was written. */
+const pathPattern = nonEmpty
+  .refine(pattern => !pattern.startsWith("!"), "always_human can't exclude paths")
+  .transform(pattern => pattern.replace(/^(\.?\/)+/u, "").replace(/\/+$/u, ""))
+  .refine(pattern => pattern !== "", "always_human needs a path inside the repository")
 
 const LandSettingsSchema = z
   .object({
-    // Enforcement does not exist yet, so a config asking for it fails loudly
-    // instead of silently reporting decisions nothing acts on.
-    mode: z.enum(["off", "shadow"]).default("shadow"),
+    mode: z.enum(["off", "shadow", "enforce"]).default("shadow"),
+    // The strictest, so a file written before profiles existed keeps its protection.
+    profile: z.enum(LAND_PROFILES).default("critical"),
     main_is_staging: z.boolean().default(false),
-    max_lines: z.number().int().positive().default(400),
-    max_review_rounds: z.number().int().positive().default(5),
-    always_human: z.array(z.string().trim().min(1)).default([])
+    /** Logins whose pull requests may merge unattended. Empty means any human author. */
+    authors: z.array(nonEmpty).default([]),
+    /** The account reviews post as, for callers outside the action. */
+    reviewer: nonEmpty.default(GITHUB_ACTIONS_BOT_LOGIN),
+    /** Checks that must pass on the head. Unattended merging needs at least one. */
+    required_checks: z.array(nonEmpty).default([]),
+    /** Optional hard size limit. Without it, size is only a signal for the judge. */
+    max_lines: z.number().int().positive().optional(),
+    /** No longer read: rounds alone say nothing. Accepted so older files keep parsing. */
+    max_review_rounds: z.number().int().positive().optional(),
+    always_human: z.array(pathPattern).default([]),
+    /** Named situations, in plain language, that the judge must send to a person. */
+    ask_when: z.record(z.string(), nonEmpty).default({})
   })
   .strict()
 
@@ -91,6 +180,8 @@ export type VerdictRecord = {
   sha: string
   verdict: LandVerdict
   kind: LandReviewKind
+  /** True when the review raised a high or critical finding, so deleting its comment hides nothing. */
+  severe: boolean
 }
 
 export type LandThread = {
@@ -98,22 +189,57 @@ export type LandThread = {
   is_outdated: boolean
   path: string | null
   firstBody: string
+  /** True when this reviewer opened the thread, false for a person or another bot. */
+  isOwn: boolean
+}
+
+/** Facts that only exist when someone is about to merge, so CI's own report leaves them out. */
+export type MergeFacts = {
+  isOpen: boolean
+  isDraft: boolean
+  /** Null while GitHub is still computing it. */
+  mergeable: boolean | null
+  checks: CommitCheck[]
+  /** People whose latest review requests changes. */
+  changesRequestedBy: string[]
+  /** True when the base branch was changed after the last full review. */
+  retargeted: boolean
+  /** Files that changed on both the base branch and this pull request since they diverged. */
+  overlappingFiles: string[]
 }
 
 export type LandInput = {
   headSha: string
+  author: string
   authorIsBot: boolean
   records: VerdictRecord[]
   files: PullRequestFile[]
   threads: LandThread[]
   config: SdlcConfig
+  /** Set when the pull request doesn't target the branch its policy describes. */
+  otherBase: string | null
+  /** True unless the head branch lives in this repository. */
+  isFork: boolean
+  /** The mention that asks this repository's reviewer for a review. */
+  command: string
+  /** Present only for a merge attempt. */
+  merge?: MergeFacts | undefined
 }
 
+/**
+ * `not-ready` means the agent has work left, `ask` means a person must decide,
+ * and `ready` means no fixed rule stops it and the judge decides.
+ */
+export type LandOutcome = "ready" | "not-ready" | "ask"
+
 export type LandDecision = {
-  /** True when no rule asks for a person. */
-  merge: boolean
-  /** One line per rule that asked for a person, empty when `merge` is true. */
-  reasons: string[]
+  outcome: LandOutcome
+  /** Work the agent must finish before anyone is asked anything. */
+  blockers: string[]
+  /** Fixed rules that need a person. */
+  asks: string[]
+  /** Facts that decide nothing here, for the judge to weigh. */
+  signals: string[]
   countedLines: number
   rounds: number
 }
@@ -134,12 +260,13 @@ export function parseSdlcConfig(text: string | null): SdlcConfig {
 }
 
 const VERDICT_RECORD_SOURCE =
-  "<!-- nibble-review:verdict sha=([0-9a-f]{40}) verdict=(lgtm|request-changes|block) kind=(full|delta) -->"
+  "<!-- nibble-review:verdict sha=([0-9a-f]{40}) verdict=(lgtm|request-changes|block) kind=(full|delta)( severe)? -->"
 const FINAL_VERDICT_RECORD = new RegExp(`${VERDICT_RECORD_SOURCE}$`, "u")
 
 /** Renders the application-owned record land trusts, for the very end of a published body. */
 export function verdictMarker(record: VerdictRecord): string {
-  return `<!-- nibble-review:verdict sha=${record.sha} verdict=${record.verdict} kind=${record.kind} -->`
+  const severe = record.severe ? " severe" : ""
+  return `<!-- nibble-review:verdict sha=${record.sha} verdict=${record.verdict} kind=${record.kind}${severe} -->`
 }
 
 /** Machine-readable name of each verdict the application can render. */
@@ -176,7 +303,12 @@ export function parseVerdictMarker(body: string): VerdictRecord | null {
   if (!match) {
     return null
   }
-  return { sha: match[1] as string, verdict: match[2] as LandVerdict, kind: match[3] as LandReviewKind }
+  return {
+    sha: match[1] as string,
+    verdict: match[2] as LandVerdict,
+    kind: match[3] as LandReviewKind,
+    severe: match[4] !== undefined
+  }
 }
 
 /** Extracts the list under `## Where to look`, or null when the body has none. */
@@ -190,17 +322,26 @@ export function parseWhereToLook(body: string): string | null {
   return (end < 0 ? rest : rest.slice(0, end)).trim() || null
 }
 
-const NOT_COUNTED = /(^|\/)(docs?|fixtures|generated|dist)\/|\.(md|mdx|txt|snap)$/iu
+// By extension, never by folder: code under `docs/` or `dist/` still runs.
+const NOT_COUNTED = /\.(md|mdx|txt|snap)$/iu
 
 const TEST_PATH =
-  /(^|\/)(tests?|__tests__|spec)\/|\.(test|spec)\.[^/]+$|_test\.[^/]+$|(^|\/)(test_[^/]+|tests\.[^/]+)$/iu
+  /(^|\/)(tests?|__tests__)\/|\.(test|spec)\.[^/]+$|_(test|spec)\.[^/]+$|(^|\/)(test_[^/]+|tests\.[^/]+)$/iu
 
 // Case-sensitive, or names like `latest.ts` would count as tests.
 const TEST_CLASS_FILE = /[a-z0-9]Tests?\.[^/]+$/u
 
-/** True for test files across common layouts, inside or outside a test directory. */
-function isTestFile(path: string): boolean {
+// RSpec's directory, whose name other languages also use for code.
+const SPEC_DIRECTORY = /(^|\/)spec\//iu
+
+/** True for files that are tests by every common layout's rules, so nothing that runs in production. */
+function isOnlyTest(path: string): boolean {
   return TEST_PATH.test(path) || TEST_CLASS_FILE.test(path)
+}
+
+/** True for anything that may be a test, for spotting tests that got weaker. */
+function isTestFile(path: string): boolean {
+  return isOnlyTest(path) || SPEC_DIRECTORY.test(path)
 }
 
 /** Formats a path as a code span, so a file name can only ever render as text. */
@@ -218,20 +359,25 @@ function countedLines(files: PullRequestFile[]): number {
   return files
     .filter(
       file =>
-        ![NOT_COUNTED.test(file.filename), isTestFile(file.filename), isIgnoredLockfile(file.filename)].some(Boolean)
+        ![NOT_COUNTED.test(file.filename), isOnlyTest(file.filename), isIgnoredLockfile(file.filename)].some(Boolean)
     )
     .reduce((sum, file) => sum + file.changes, 0)
 }
 
-/** Lists the changed paths, old names included, that match an always-human pattern. */
-function alwaysHumanHits(files: PullRequestFile[], extra: readonly string[]): string[] {
-  const patterns = [...BUILT_IN_ALWAYS_HUMAN, ...extra]
+/** Lists the changed paths, old names included, that this repository sends to a person. */
+function alwaysHumanHits(files: PullRequestFile[], config: SdlcConfig): string[] {
+  // A folder written without a wildcard means everything in it.
+  const own = config.land.always_human.flatMap(pattern => [pattern, `${pattern}/**`])
+  const patterns = [...PROFILE_PATHS[config.land.profile], ...own]
   const paths = files.flatMap(file => [file.filename, ...(file.previous_filename ? [file.previous_filename] : [])])
   return [...new Set(paths.filter(path => patterns.some(pattern => minimatch(path, pattern, GLOB_OPTIONS))))].sort()
 }
 
 /** Describes how one test file got weaker, or null when it did not. */
 function testWeakening(file: PullRequestFile): string | null {
+  if (file.previous_filename && isTestFile(file.previous_filename) && !isTestFile(file.filename)) {
+    return `test file renamed away: ${codeSpan(file.previous_filename)}`
+  }
   if (!isTestFile(file.filename)) {
     return null
   }
@@ -251,80 +397,168 @@ function testWeakening(file: PullRequestFile): string | null {
   return assertions(removed) > assertions(added) ? `assertions removed: ${codeSpan(file.filename)}` : null
 }
 
-/** True when a reviewer finding was rendered at critical severity. */
-function isCritical(body: string): boolean {
-  const [first] = body.trim().split(/\s+/u, 2)
-  const prefix = inlineSeverityPrefix("critical")
-  return body.trim().startsWith(prefix) || body.trim().startsWith(`${first} ${prefix}`)
+/** True when a reviewer finding was rendered at high or critical severity. */
+function isSevere(body: string): boolean {
+  const text = body.trim()
+  const [first] = text.split(/\s+/u, 1)
+  return SEVERE_SEVERITIES.some(severity => {
+    const prefix = inlineSeverityPrefix(severity)
+    return text.startsWith(prefix) || text.startsWith(`${first} ${prefix}`)
+  })
 }
 
-/**
- * Decides whether a pull-request head could merge without a person.
- *
- * This is the whole policy, and it reads only facts. A model can raise a
- * finding that blocks the verdict, but nothing here lets one clear a rule.
- */
-export function evaluateLand(input: LandInput): LandDecision {
-  const { config, files, headSha, records, threads } = input
-  const reasons: string[] = []
+/** Formats paths as code spans, shortened when there are many. */
+function shownPaths(paths: string[]): string {
+  const shown = paths.slice(0, 5).map(codeSpan).join(", ")
+  return paths.length > 5 ? `${shown} and ${paths.length - 5} more` : shown
+}
+
+/** How to get a full review rather than a fast-track. */
+function askAgain(command: string): string {
+  return `comment ${codeSpan(`${command} re-review`)}`
+}
+
+/** What the review still needs before this exact commit counts as approved. */
+function reviewBlockers({ command, headSha, records, threads }: LandInput): string[] {
+  const blockers: string[] = []
   // A full review outranks a fast-track of the same commit: the fast-track path
   // says LGTM for any head it has seen, including one a full review blocked.
   const forHead = records.filter(record => record.sha === headSha)
   const onHead = forHead.filter(record => record.kind === "full").at(-1) ?? forHead.at(-1)
-
-  if (input.authorIsBot) {
-    reasons.push("opened by a bot or App")
-  }
   if (!onHead) {
-    reasons.push("no review verdict on this commit")
+    blockers.push("no review verdict on this commit")
   } else if (onHead.verdict !== "lgtm") {
-    reasons.push(`verdict on this commit is ${onHead.verdict}`)
+    blockers.push(`verdict on this commit is ${onHead.verdict}`)
   }
   const lastFull = records.filter(record => record.kind === "full").at(-1)
   if (!lastFull) {
-    reasons.push("no full review on this pull request")
+    blockers.push("no full review on this pull request")
   } else if (lastFull.verdict === "block" && lastFull.sha !== headSha) {
     // A PR-level blocker leaves no thread to resolve, and a fast-track of a
     // later commit can't clear it. Request-changes findings do leave threads.
-    reasons.push("the last full review blocked and no full review has cleared it")
+    blockers.push("the last full review blocked and no full review has cleared it")
+  } else if (
+    lastFull.verdict !== "lgtm" &&
+    (lastFull.severe || threads.some(thread => thread.isOwn && isSevere(thread.firstBody)))
+  ) {
+    blockers.push(`a high or critical finding needs a full review to clear it: ${askAgain(command)}`)
   }
-  if (records.length > config.land.max_review_rounds) {
-    reasons.push(`${records.length} review rounds, over the limit of ${config.land.max_review_rounds}`)
-  }
-
-  const lines = countedLines(files)
-  if (lines > config.land.max_lines) {
-    reasons.push(`${lines} counted lines, over the limit of ${config.land.max_lines}`)
-  }
-  const hits = alwaysHumanHits(files, config.land.always_human)
-  if (hits.length > 0) {
-    const shown = hits.slice(0, 5).map(codeSpan).join(", ")
-    reasons.push(`always-human paths: ${shown}${hits.length > 5 ? ` and ${hits.length - 5} more` : ""}`)
-  }
-  reasons.push(...files.map(testWeakening).filter(reason => reason !== null))
-
   const unresolved = threads.filter(thread => !thread.is_resolved).length
   if (unresolved > 0) {
-    reasons.push(`${unresolved} unresolved review thread${unresolved === 1 ? "" : "s"}`)
+    blockers.push(`${unresolved} unresolved review thread${unresolved === 1 ? "" : "s"}`)
   }
-  // Outdated means the anchored code changed. A resolved critical that is not
-  // outdated was closed by a reply alone, which is fine for anything else.
+  return blockers
+}
+
+/** What the pull request still needs before GitHub could merge it safely. */
+function mergeBlockers(merge: MergeFacts, config: SdlcConfig, command: string): string[] {
+  const blockers: string[] = []
+  if (!merge.isOpen) {
+    blockers.push("the pull request is not open")
+  }
+  if (merge.isDraft) {
+    blockers.push("the pull request is a draft")
+  }
+  if (merge.mergeable === null) {
+    blockers.push("GitHub is still computing whether it merges cleanly: try again shortly")
+  } else if (!merge.mergeable) {
+    blockers.push("it conflicts with the base branch")
+  }
+  if (merge.overlappingFiles.length > 0) {
+    blockers.push(
+      `the base branch changed the same files, so update this branch: ${shownPaths(merge.overlappingFiles)}`
+    )
+  }
+  if (merge.retargeted) {
+    blockers.push(`the base branch changed after the last full review: ${askAgain(command)}`)
+  }
+  for (const name of config.land.required_checks) {
+    // Only a check run counts as having run: any push token can post a status of the same name.
+    const named = merge.checks.filter(check => check.name === name)
+    const bad = named.find(check => check.state !== "success")
+    if (!named.some(check => check.source === "run")) {
+      blockers.push(`required check has not run: ${codeSpan(name)}`)
+    } else if (bad) {
+      blockers.push(`required check is ${bad.state}: ${codeSpan(name)}`)
+    }
+  }
+  const others = merge.checks.filter(
+    check =>
+      (check.state === "pending" || check.state === "failure") && !config.land.required_checks.includes(check.name)
+  )
+  blockers.push(...others.map(check => `check is ${check.state}: ${codeSpan(check.name)}`))
+  blockers.push(...merge.changesRequestedBy.map(login => `${codeSpan(login)} requested changes`))
+  return blockers
+}
+
+/**
+ * Applies every fixed rule to a pull-request head.
+ *
+ * It reads only facts, and nothing a model says can clear a rule here. The
+ * judge runs afterwards, only on a `ready` head, and can only hold it back.
+ */
+export function evaluateLand(input: LandInput): LandDecision {
+  const { config, files, records, threads } = input
+  const blockers = [...reviewBlockers(input), ...(input.merge ? mergeBlockers(input.merge, config, input.command) : [])]
+
+  const asks: string[] = []
+  if (input.authorIsBot) {
+    asks.push("opened by a bot or App")
+  } else if (input.author === "") {
+    asks.push("its author is unknown")
+  } else if (config.land.authors.length > 0 && !config.land.authors.includes(input.author)) {
+    asks.push(`opened by ${codeSpan(input.author)}, who is not in \`authors\``)
+  }
+  if (input.isFork) {
+    asks.push("opened from a fork")
+  }
+  if (config.land.required_checks.length === 0) {
+    asks.push("no `required_checks` are configured, so nothing proves the change works")
+  }
+  const hits = alwaysHumanHits(files, config)
+  if (hits.length > 0) {
+    asks.push(`always-human paths: ${shownPaths(hits)}`)
+  }
+  if (input.otherBase !== null) {
+    asks.push(`it targets ${codeSpan(input.otherBase)}, and the policy only describes the default branch`)
+  }
+  const lines = countedLines(files)
+  if (config.land.max_lines !== undefined && lines > config.land.max_lines) {
+    asks.push(`${lines} counted lines, over the limit of ${config.land.max_lines}`)
+  }
+
+  const signals = files.map(testWeakening).filter(reason => reason !== null)
+  // Outdated means the anchored code changed. A reply alone may be a fair
+  // answer, because the reviewer can be wrong, so the judge reads those.
   for (const thread of threads) {
-    if (thread.is_resolved && !thread.is_outdated && isCritical(thread.firstBody)) {
-      reasons.push(
-        `critical finding closed without a code change: ${thread.path ? codeSpan(thread.path) : "unknown path"}`
+    if (thread.isOwn && thread.is_resolved && !thread.is_outdated && isSevere(thread.firstBody)) {
+      signals.push(
+        `severe finding closed without a code change: ${thread.path ? codeSpan(thread.path) : "unknown path"}`
       )
     }
   }
 
-  return { merge: reasons.length === 0, reasons, countedLines: lines, rounds: records.length }
+  // Unfinished work comes first, so a person is only asked about a finished change.
+  const outcome = blockers.length > 0 ? "not-ready" : asks.length > 0 ? "ask" : "ready"
+  return { outcome, blockers, asks, signals, countedLines: lines, rounds: records.length }
+}
+
+const OUTCOME_TEXT: Readonly<Record<LandOutcome, string>> = {
+  ready: "ready for the judge",
+  "not-ready": "not ready",
+  ask: "needs you"
+}
+
+/** The reasons behind an outcome, empty when it is ready. */
+function outcomeReasons(decision: LandDecision): string[] {
+  return decision.outcome === "not-ready" ? decision.blockers : decision.asks
 }
 
 /** Short text for the commit status, within GitHub's description limit. */
 export function statusDescription(decision: LandDecision): string {
   // Commit statuses are plain text, so the Markdown code spans go.
-  const reason = decision.reasons[0]?.replaceAll("`", "")
-  const text = decision.merge ? "shadow: would merge" : `shadow: would ask you (${reason})`
+  const reason = outcomeReasons(decision)[0]?.replaceAll("`", "")
+  const text = `${OUTCOME_TEXT[decision.outcome]}${reason ? ` (${reason})` : ""}`
   return text.length <= MAX_STATUS_DESCRIPTION ? text : `${text.slice(0, MAX_STATUS_DESCRIPTION - 1)}…`
 }
 
@@ -336,18 +570,26 @@ export function renderRiskComment(options: {
   whereToLook: WhereToLook | null
 }): string {
   const { config, decision, headSha, whereToLook } = options
+  const limit = config.land.max_lines === undefined ? "" : ` of ${config.land.max_lines}`
   const lines = [
     RISK_COMMENT_MARKER,
     "## Risk",
     "",
-    `**Land (shadow, nothing was merged):** ${decision.merge ? "would merge" : "would ask you"}, judged on ${headSha}`,
+    `**Land (fixed rules only, nothing was merged):** ${OUTCOME_TEXT[decision.outcome]}, checked on ${headSha}`,
     "",
-    `- Counted lines: ${decision.countedLines} of ${config.land.max_lines}`,
-    `- Review rounds: ${decision.rounds} of ${config.land.max_review_rounds}`,
+    `- Mode and profile: ${config.land.mode}, ${config.land.profile}`,
+    `- Counted lines: ${decision.countedLines}${limit}`,
+    `- Review rounds: ${decision.rounds}`,
     `- \`main\` is a safe staging step: ${config.land.main_is_staging ? "yes" : "no"}`
   ]
-  if (decision.reasons.length > 0) {
-    lines.push("", "**Why it needs you**", "", ...decision.reasons.map(reason => `- ${reason}`))
+  if (decision.blockers.length > 0) {
+    lines.push("", "**What the agent still has to do**", "", ...decision.blockers.map(reason => `- ${reason}`))
+  }
+  if (decision.asks.length > 0) {
+    lines.push("", "**Why it needs you**", "", ...decision.asks.map(reason => `- ${reason}`))
+  }
+  if (decision.signals.length > 0) {
+    lines.push("", "**What the judge should weigh**", "", ...decision.signals.map(reason => `- ${reason}`))
   }
   if (whereToLook) {
     const stale = whereToLook.sha === headSha ? "" : ` (from the review of ${whereToLook.sha ?? "an earlier commit"})`

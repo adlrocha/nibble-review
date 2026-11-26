@@ -138,7 +138,7 @@ Models investigate and write. They do not decide which commit was reviewed, whet
 | `allow-skip` | `true` | Honor `[skip]` titles and `@nibble-review skip` body lines from trusted human authors. Set `false` when the review check is required for merging. |
 | `install-dependencies` | `false` | Install the repository's npm/pnpm/yarn dependencies first. Runs their install scripts. |
 | `emojis` | `true` | Prefix inline comments with severity emojis. |
-| `land` | `false` | Report whether each head could merge without a person. See [Land](#land). |
+| `land` | `false` | Report whether a fixed rule stops each head from merging without a person. See [Land](#land). |
 | `timeout-minutes` | `30` | Upper bound for each review attempt. |
 | `reuse-lanes` | `true` | Let the fallback attempt reuse the lanes the failed attempt finished, within the same job. See below. |
 
@@ -161,7 +161,7 @@ A review that has published nothing a minute before `timeout-minutes` gives up a
 
 ## Land
 
-Land answers one question for each pull-request head: could this exact commit merge without a person? It's off unless a workflow sets `land: "true"`, and it runs after the review as a separate step with no model. The commit status also needs `statuses: write`; without it you still get the comment, plus a warning. **Land never merges or blocks anything.** It only reports, so a failure is a warning, and removing the input turns it all off.
+Land answers one question for each pull-request head: does anything fixed stop this exact commit from merging without a person? It's off unless a workflow sets `land: "true"`, and it runs after the review as a separate step with no model. The commit status also needs `statuses: write`; without it you still get the comment, plus a warning. **The action never merges or blocks anything.** It only reports, so a failure is a warning, and removing the input turns it all off.
 
 ```yaml
 - uses: adlrocha/nibble-review@v1
@@ -174,26 +174,44 @@ Each run updates one `## Risk` comment and posts a `nibble-review/land` commit s
 
 Land counts only reviews published since it was enabled, because older ones have no verdict record. A pull request already open at that point reports "no full review" until its next full review.
 
-A head would need a person when any of these hold:
+A head has one of three outcomes:
 
-- it has no LGTM on that exact commit, the pull request has never had a full review, or the last full review blocked it and nothing but a fast-track came after;
-- a bot or App opened the pull request;
-- it has more review rounds than `max_review_rounds`;
-- it has more changed lines than `max_lines`, not counting docs, tests, or generated files;
-- it touches an always-human path: `.github/`, `.nibble/`, database migrations, the manifests and lockfiles of common package managers, build and CI files (`Dockerfile`, `build.rs`, `.cargo/config.toml`, `.npmrc`, `action.yml`), or anything in `always_human`. Patterns match inside dot directories and ignore letter case;
-- it removes a test file or assertions, or adds a skip or focus marker, in common test layouts;
-- a thread this reviewer opened is unresolved, or a critical finding was closed without its code changing. Other findings may be closed by a reply, because the reviewer can be wrong.
+| Outcome | Meaning | When |
+| --- | --- | --- |
+| Not ready | The agent still has work to do | No LGTM on this exact commit; no full review yet; the last full review blocked it, or raised a high or critical finding, and no full review has cleared it since; an unresolved review thread |
+| Needs you | A fixed rule needs a person | A bot or App opened it, or someone outside `authors`; no `required_checks` are set; it touches a path the profile or `always_human` protects; it is over `max_lines`, if set |
+| Ready for the judge | No fixed rule stops it | Everything else |
+
+Review rounds and size decide nothing on their own. Counted lines leave out Markdown and text files, snapshots, lockfiles, and files every common layout would call a test; code counts in any folder, `dist/` and `docs/` included. Weakened tests (a removed or renamed-away test file, removed assertions, a skip or focus marker) and severe findings closed by a reply alone are listed for the judge to weigh.
+
+Merging is left to a local tool. `node dist/cli/land.js --json`, with `GH_TOKEN`, `GITHUB_REPOSITORY` and `PR_NUMBER` set, prints the decision as JSON, adding what only matters at merge time: the pull request is open, not a draft, and free of conflicts; no check on the head failed or is still running; every one of `required_checks` is a check run that succeeded, not one that was skipped; nobody's review asks for changes; it targets the default branch and did so when it was reviewed; and the base branch hasn't changed the same files. It also carries the evidence a judge reads: the diff, linked issues, reviews, threads, comments, and the repository's `.nibble/risk.md`. It writes nothing. [`nibble land`](https://github.com/adlrocha/nibble/blob/main/docs/land.md) uses it to judge and merge.
 
 Settings live in the `[land]` table of `.nibble/sdlc.toml`, read from the default branch so a pull request can't relax its own rules. Every setting is optional, and other tables belong to other tools:
 
 ```toml
 [land]
-mode = "shadow"          # "off" stops the comment and status; remove the land input to stop the rest
-main_is_staging = false  # shown in the Risk comment; changes no rule yet
-max_lines = 400
-max_review_rounds = 5
+mode = "shadow"               # "off" stops the report, "enforce" lets a local tool merge
+profile = "standard"          # "side-project", "standard" or "critical" (the default)
+required_checks = ["test"]    # needed for anything to merge unattended
+authors = ["adlrocha"]        # whose pull requests may merge unattended; empty means any human
 always_human = ["src/auth/**"]
+reviewer = "nibble-review[bot]" # the account reviews post as, if not github-actions[bot]
+main_is_staging = false       # true when merging only reaches a staging environment
+# max_lines = 400             # a hard size limit; unset by default
+
+[land.ask_when]               # situations the judge must send to a person
+newsletter = "Changes who gets an email, or when"
 ```
+
+| Profile | Paths that always need a person |
+| --- | --- |
+| `side-project` | `.nibble/sdlc.toml`, workflows, and local actions, which no profile can drop: a workflow in the pull request could post as the reviewer |
+| `standard` | Also other CI settings, the rest of `.nibble/`, database migrations and schemas, agent instructions and settings (`AGENTS.md`, `.claude/`, `.mcp.json`, and similar), git hooks, `.env` files, `CODEOWNERS`, and `.gitmodules` |
+| `critical` | Also dependency manifests and lockfiles, build and install scripts, containers, and infrastructure |
+
+Patterns match inside dot directories and ignore letter case, and a folder name covers everything in it. The exact lists are `PROFILE_PATHS` in [src/lib/land.ts](src/lib/land.ts).
+
+**What land can't prove.** Reviews post as `github-actions[bot]`, and anyone who can push a branch can run a workflow that posts as it. The path rules stop that from inside the pull request, not from another branch. Use the App identity if people you don't trust can push. `max_review_rounds` is accepted in older files and no longer read.
 
 ## Fixer (experimental)
 

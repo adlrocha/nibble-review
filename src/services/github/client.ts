@@ -178,6 +178,8 @@ export type PullRequestSummary = {
   html_url?: string | null
   isDraft?: boolean
   draft?: boolean
+  mergeable?: boolean | null
+  changed_files?: number
   reviewDecision?: string | null
   state?: string | null
   updated_at?: string | null
@@ -229,6 +231,21 @@ export type CommitStatus = {
   description: string
 }
 
+/** The combined state of one check run or commit status on a commit. */
+export type CommitCheck = {
+  name: string
+  state: "success" | "skipped" | "pending" | "failure"
+  /** A check run belongs to a GitHub App; any push token can post a commit status. */
+  source: "run" | "status"
+}
+
+/** How far a base branch moved since a head forked from it. */
+export type BaseDrift = {
+  files: string[]
+  /** True when GitHub listed only part of the changed files. */
+  truncated: boolean
+}
+
 export type ReviewThreadsResult = {
   available: boolean
   threads: ReviewThread[]
@@ -266,6 +283,32 @@ export type GitHubClient = {
   listPullRequestFiles(prNumber: number): Promise<PullRequestFile[]>
   updateIssueComment(commentId: number, body: string): Promise<void>
   createCommitStatus(sha: string, status: CommitStatus): Promise<void>
+  /** Lists the newest run of every check, and every commit status, on a commit. */
+  listCommitChecks(sha: string): Promise<CommitCheck[]>
+  /** Lists the files `base` changed since `head` forked from it. */
+  getBaseDrift(base: string, head: string): Promise<BaseDrift>
+}
+
+/** GitHub lists at most this many files in a comparison. */
+const MAX_COMPARED_FILES = 300
+
+/** GitHub lists at most this many of a pull request's files. */
+export const MAX_PULL_REQUEST_FILES = 3000
+
+/** The state of a check run. Skipped and neutral runs proved nothing, though GitHub lets them pass. */
+function checkRunState(status: string, conclusion: string | null): CommitCheck["state"] {
+  if (status !== "completed") {
+    return "pending"
+  }
+  if (conclusion === "success") {
+    return "success"
+  }
+  return conclusion === "skipped" || conclusion === "neutral" ? "skipped" : "failure"
+}
+
+/** The state of a commit status. */
+function commitStatusState(state: string): CommitCheck["state"] {
+  return state === "success" || state === "pending" ? state : "failure"
 }
 
 /**
@@ -295,7 +338,8 @@ function normalizePullRequest(data: PullRequestSummary): PullRequestSummary {
     headRefName: data.headRefName || data.head?.ref || null,
     baseRefOid: data.baseRefOid || data.base?.sha || null,
     headRefOid: data.headRefOid || data.head?.sha || null,
-    isDraft: data.isDraft ?? data.draft ?? false
+    isDraft: data.isDraft ?? data.draft ?? false,
+    state: data.state?.toLowerCase() ?? null
   }
 }
 
@@ -419,6 +463,7 @@ type GraphQLThreadNode = {
       url?: string | null
       author?: {
         login?: string | null
+        __typename?: string | null
       } | null
     }>
   }
@@ -439,6 +484,17 @@ type GraphQLReviewThreadsResponse = {
 }
 
 /**
+ * The login REST uses for a GraphQL actor.
+ *
+ * GraphQL names an App's bot without the `[bot]` suffix every REST response
+ * carries, and authorship compares logins, so one spelling has to win.
+ */
+function restLogin(author: { login?: string | null; __typename?: string | null } | null | undefined): string | null {
+  const login = author?.login || null
+  return login !== null && author?.__typename === "Bot" && !login.endsWith("[bot]") ? `${login}[bot]` : login
+}
+
+/**
  * Normalizes GraphQL review-thread nodes into the REST-like shape used by queue
  * validation and action-item discovery.
  */
@@ -447,7 +503,7 @@ function normalizeReviewThread(node: GraphQLThreadNode): ReviewThread {
     id: comment.databaseId || null,
     node_id: comment.id || null,
     user: {
-      login: comment.author?.login || null
+      login: restLogin(comment.author)
     },
     body: comment.body || "",
     path: comment.path || node.path || null,
@@ -729,6 +785,7 @@ query($owner: String!, $name: String!, $number: Int!, $cursor: String) {
               url
               author {
                 login
+                __typename
               }
             }
           }
@@ -876,6 +933,56 @@ query($owner: String!, $name: String!, $number: Int!, $cursor: String) {
     async createCommitStatus(sha, status) {
       const { owner, repo } = splitRepository(options.repository)
       await octokit.request("POST /repos/{owner}/{repo}/statuses/{sha}", { owner, repo, sha, ...status })
+    },
+
+    async listCommitChecks(sha) {
+      const { owner, repo } = splitRepository(options.repository)
+      const runs = await octokit.paginate("GET /repos/{owner}/{repo}/commits/{ref}/check-runs", {
+        owner,
+        repo,
+        ref: sha,
+        filter: "latest",
+        per_page: 100
+      })
+      // Newest first, so the first status of a context is the current one.
+      const statuses = await octokit.paginate("GET /repos/{owner}/{repo}/commits/{ref}/statuses", {
+        owner,
+        repo,
+        ref: sha,
+        per_page: 100
+      })
+      const current = new Map<string, (typeof statuses)[number]>()
+      for (const status of statuses) {
+        if (!current.has(status.context)) {
+          current.set(status.context, status)
+        }
+      }
+      return [
+        ...runs.map(run => ({
+          name: run.name,
+          state: checkRunState(run.status, run.conclusion),
+          source: "run" as const
+        })),
+        ...[...current.values()].map(status => ({
+          name: status.context,
+          state: commitStatusState(status.state),
+          source: "status" as const
+        }))
+      ]
+    },
+
+    async getBaseDrift(base, head) {
+      const { owner, repo } = splitRepository(options.repository)
+      const response = await octokit.request("GET /repos/{owner}/{repo}/compare/{basehead}", {
+        owner,
+        repo,
+        basehead: `${head}...${base}`
+      })
+      const files = response.data.files ?? []
+      return {
+        files: files.flatMap(file => [file.filename, ...(file.previous_filename ? [file.previous_filename] : [])]),
+        truncated: files.length >= MAX_COMPARED_FILES
+      }
     }
   }
 }

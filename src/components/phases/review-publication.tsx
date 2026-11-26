@@ -7,7 +7,7 @@ import {
   type LandReviewKind,
   type LandVerdict
 } from "../../lib/land.js"
-import { reviewVerdict } from "../../lib/review-queue.js"
+import { hasSevereFinding, reviewVerdict } from "../../lib/review-queue.js"
 import { applyReviewBanner, enforceReviewBodyLimit } from "../../lib/render/review-body.js"
 import { serializeReviewPayload } from "../../services/github/review-serializer.js"
 import type { PublishedReview, ReviewDraft, ReviewRequest } from "../../types/review.js"
@@ -16,8 +16,8 @@ import { createGitHubWriteTools, type ReviewPublicationPlan } from "../../tools/
 import { useReviewContext } from "../context/review-context.js"
 
 /** Renders the verdict record for repositories that opted into land, and nothing otherwise. */
-function landRecord(request: ReviewRequest, verdict: LandVerdict, kind: LandReviewKind): string {
-  return request.land ? `\n\n${verdictMarker({ sha: request.workspaceHeadSha, verdict, kind })}` : ""
+function landRecord(request: ReviewRequest, verdict: LandVerdict, kind: LandReviewKind, severe = false): string {
+  return request.land ? `\n\n${verdictMarker({ sha: request.workspaceHeadSha, verdict, kind, severe })}` : ""
 }
 
 /** Reads the completed route and publishes it through deterministic application-owned Tools. */
@@ -52,8 +52,9 @@ export const ReviewPublication: AML.Component = async () => {
   if (draft.status === "reviewed") {
     // The record goes after the length limit so truncation can never drop it.
     const limited = enforceReviewBodyLimit(applyReviewBanner(stripLandMarkers(draft.body), model))
-    const verdict = LAND_VERDICTS[reviewVerdict(review.queue.finalize().findings)]
-    const body = `${limited}${landRecord(github.request, verdict, "full")}`
+    const { findings } = review.queue.finalize()
+    const verdict = LAND_VERDICTS[reviewVerdict(findings)]
+    const body = `${limited}${landRecord(github.request, verdict, "full", hasSevereFinding(findings))}`
     const validated = { ...draft.validated, conclusion: body }
     const payload = serializeReviewPayload(validated)
     published = { ...draft, body, validated, payload }

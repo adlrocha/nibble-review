@@ -712,7 +712,9 @@ test("land adds where to look and a verdict record only when the repository opte
   assert.deepEqual(parseVerdictMarker(result.body), {
     sha: base.request.workspaceHeadSha,
     verdict: "request-changes",
-    kind: "full"
+    kind: "full",
+    // The fixture's finding is high.
+    severe: true
   })
 })
 
