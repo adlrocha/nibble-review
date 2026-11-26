@@ -1,10 +1,11 @@
 # Read by nibble-review from the default branch, and by `nibble land` and `nibble sdlc`.
+# `nibble sdlc runbook` explains every setting. `mode = "off"` stops land here.
 [land]
-mode = "shadow" # "off", "shadow" (decide and report) or "enforce" (also merge)
+mode = "enforce" # "off", "shadow" (decide and report) or "enforce" (also merge)
 # "side-project", "standard" or "critical": how much merges without a person
 profile = "critical"
 authors = ["adlrocha"]
-required_checks = ["test", "sandbox"]
+required_checks = ["test", "sandbox", "review"]
 # true when main deploys to dev and a release deploys to production
 main_is_staging = false
 # The reviewer decides what merges everywhere, so its trust boundaries stay with a person.
