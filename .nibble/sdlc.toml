@@ -21,5 +21,13 @@ always_human = [
   "src/services/github",
   "src/tools",
   "src/services/review-preflight.ts",
-  "src/services/review-evidence.ts"
+  "src/services/review-evidence.ts",
+  "src/components/lanes",
+  "src/lib/secret-redaction.ts",
+  "src/lib/review-diff.ts",
+  "src/sandbox",
+  "bin/fix-sandbox.sh",
+  "scripts/test-sandbox.sh",
+  "src/fix",
+  "src/cli/fix.ts"
 ]
